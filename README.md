@@ -1,63 +1,71 @@
-# Omniglot data set for one-shot learning
+# Siamese-Networks-for-One-Shot-Learning (Under Construction)
 
-The Omniglot data set is designed for developing more human-like learning algorithms. It contains 1623 different handwritten characters from 50 different alphabets. Each of the 1623 characters was drawn online via Amazon's Mechanical Turk by 20 different people. Each image is paired with stroke data, a sequences of [x,y,t] coordinates with time (t) in milliseconds.
+This repository was created for me to familiarize with One Shot Learning. The code uses Keras library and the Omniglot dataset.
+This repository tries to implement the code for Siamese Neural Networks for One-shot Image Recognition by Koch _et al._.
 
-### NEW RELEASE (Jan. 2019)
+## One-Shot Learning
 
-**The stroke data is now available with python starter code and raw text files.** Run python/demo.py for an example of how to use it. All other files remain unchanged.
+Currently most deep learning models need generally thousands of labeled samples per class. Data acquisition for most tasks is very expensive. The possibility to have models that could learn from one or a few samples is a lot more interesting than having the need of acquiring and labeling thousands of samples. One could argue that a young child can learn a lot of concepts without needing a large number of examples.  This is where one-shot learning appears: the task of classifying with only having access of one example of each possible class in each test task. This ability of learning from little data is very interesting and could be used in many machine learning problems. 
 
-### Citing this data set
-Please cite the following paper:
+Despite this paper is focused on images, this concept can be applied to many fields. To fully understand the problem we should describe what is considered an example of an one-shot task. Given a test sample, X, an one-shot task would aim to classify this test image into one of C categories. For this support set of samples with a representing N unique categories (N-way one shot task) is given to the model in order to decide what is the class of the test images. Notice that none of the samples used in this one-shot task have been seen by the model (the categories are different in training and testing). 
 
-[Lake, B. M., Salakhutdinov, R., and Tenenbaum, J. B. (2015). Human-level concept learning through probabilistic program induction.](http://www.sciencemag.org/content/350/6266/1332.short) _Science_, 350(6266), 1332-1338.
+Frequently for one-shot learning tasks, the Omniglot dataset is used for evaluating the performance of the models. Let’s take a deeper look to this database, since it was the dataset used in the paper (MNIST was also tested but we will stick with Omniglot).
 
-And see our progress report on the challenge:
+## Omniglot Dataset
 
-[Lake, B. M., Salakhutdinov, R., and Tenenbaum, J. B. (2019). The Omniglot Challenge: A 3-Year Progress Report.](https://arxiv.org/abs/1902.03477) Preprint available on arXiv:1902.03477. 
+<p align="center">
+  <img src="https://user-images.githubusercontent.com/10371630/36079867-c94b19fe-0f7f-11e8-9ef8-6f017d214d43.png" alt="Omniglot Dataset"/>
+</p>
 
-We are grateful for the [Omniglot](http://www.omniglot.com/) encyclopedia of writing systems for helping to make this data set possible, and for [Jason Gross](https://people.csail.mit.edu/jgross/) who was essential to the development and collection of this data set.
+The Omniglot dataset consists in 50 different alphabets, 30 used in a background set and 20 used in a evaluation set. Each alphabet has a number of characters from 14 to 55 different characters drawn by 20 different subjects, resulting in 20 105x105 images for each character. The background set should be used in training for hyper parameter tuning and feature learning, leaving the final results to the remaining 20 alphabets, never seen before by the models trained in the background set. Despite that this paper uses 40 background alphabets and 10 evaluation alphabets. 
 
-![Visualization of Omniglot dataset.](omniglot_grid.jpg)
+This dataset is considered as sort of a MNIST transpose, where the number of possible classes is considerably higher than the number of training samples, making it suitable to one-shot tasks. 
 
-### CONTENTS
-The Omniglot data set contains 50 alphabets. We split these into a background set of 30 alphabets and an evaluation set of 20 alphabets. To compare with the results in our paper, only the background set should be used to learn general knowledge about characters (e.g., feature learning, meta-learning, or hyperparameter inference). One-shot learning results are reported using alphabets from the evaluation set.
+The authors use 20-way one-shot task for evaluating the performance in the evaluation set. For each alphabet it is performed 40 different one-shot tasks, completing a total of 400 tasks for the 10 evaluation alphabets. An example of one one-shot task in this dataset can be seen in the following figure: 
 
-Two more challenging  "minimal" splits contain only five background alphabets, denoted as "background small 1" and "background small 2". This is a closer approximation to the experience that a human adult might have for characters in general.  For the goal of building human-level AI systems with minimal training, given a rough estimate of what "minimal" means for people, there is a need to explore settings with fewer training examples per class and fewer background classes for learning to learn.
+<p align="center">
+  <img src="https://user-images.githubusercontent.com/10371630/36079892-1df60568-0f80-11e8-8297-a7c6beec4491.png" alt="One-Shot Task"/>
+</p>
 
-### PYTHON
+Let's dive into the methodology proposed by Koch_et al._ to solve this one-shot task problem.
 
-Python 2.*   
-Requires scipy, matplotlib, and numpy   
+## Methodology (Under Construction)
 
-Learn about the structure of the data set by unzipping the directories and running python/demo.py. This produces figures like this one, with different colors indicating different strokes:
+To solve this methodology, the authors propose the use of a Deep Convolutional Siamese Networks.  Siamese Nets were introduced by Bromley and Yan LeCun in the 90s for a verification problem. 
+Siamese nets  are two twin networks that accept distinct inputs but are joined in by a energy function that calculates a distance metric between the outputs of the two nets. 
+The weights of both networks are tied, allowing them to compute the same function. 
+In this paper the weighed L1 distance between twin feature vectors is used as energy function, combined with a sigmoid activations. 
 
-<img src="demo_strokes.png" alt="Example figure from python/demo.py" width="600"/>   
+This architecture seems to be designed for verification tasks, and this is exactly how the authors approach the problem. 
 
-Key data files (images and strokes):  
-images_background.zip   
-strokes_background.zip   
-images_evaluation.zip   
-strokes_evaluation.zip  
+In the paper a convolutional neural net was used. 3 Blocks of Cov-RELU-Max Pooling are used followed by a Conv-RELU connected to a fully-connected layer with a sigmoid function. This layer produces the feature vectors that will be fused by the L1 weighed distance layer. The output is fed to a final layer that outputs a value between 1 and 0 (same class or different class).  To assess the best architecture, Bayesian hyper-parameter tuning was performed. The best architecture is depicted in the following image:
 
-Key data files for the two "minimal" splits:      
-images_background_small1.zip   
-strokes_background_small1.zip   
-images_background_small2.zip   
-strokes_background_small2.zip    
-The evaluation set is the same as above.        
+<p align="center">
+  <img src="https://user-images.githubusercontent.com/10371630/36121224-71403aa0-103d-11e8-81c6-6caae24a835c.png" alt="best_architecture"/>
+</p>
 
-A character is a series of pen coordinates (x,y,time) beginning with "START". Breaks between pen strokes are denoted as "BREAK" (indicating a pen up action). The stroke data is raw. It has non-uniform spatial and temporal sampling intervals, as the data was collected from many different web browsers and computers. For most applications, you will want to interpolate to get uniform spatial or temporal sampling intervals.
+L2-Regularization is used in each layer, and as an optimizer it is used Stochastic Gradient Descent with momentum. As previously mentioned, Bayesian hyperparameter optimization was used to find the best parameters for the following topics:
+- Layer-wise Learning Rates (search from 0.0001 to 0.1) 
+- Layer-wise Momentum (search from 0 to 1)
+- Layer-wise L2-regularization penalty (from 0 to 0.1)
+- Filter Size from 3x3 to 20x20
+- Filter numbers from 16 to 256 (using multipliers of 16)
+- Number of units in the fully connected layer from 128 to 4096 (using multipliers of 16)
 
-Our one-shot classification task requires within-alphabet discrimination, which is more challenging than the between-alphabet discrimination tasks used elsewhere. To compare with the one-shot classification results in our paper, enter the 'one-shot-classification' directory and unzip 'all_runs.zip' and place all the folders 'run01',...,'run20' in the current directory. Run 'demo_classification.py' to demo a baseline model using Modified Hausdorff Distance. 
+For training some details were used:
+- The learning rate is defined layer-wise and it is decayed by 1% each epoch.
+- In every layer the momentum is fixed at 0.5 and it is increased linearly each epoch until reaching a value mu.
+- 40 alphabets were used in training and validation and 10 for evaluation
+- The problem is considered a verification task since the train consists in classifying pairs in same or different character. - After that in evaluation phase, the test image is paired with each one of the support set characters. The pair with higher probability output is considered the class for the test image. 
+- Data Augmentation was used with affine distortions (rotations, translations, shear and zoom)
 
-### MATLAB
+## Implementation Details (Under Construction)
 
-Learn about the structure of the data set by running the script 'demo.m'.   
+## References
+- Koch, Gregory, Richard Zemel, and Ruslan Salakhutdinov. "Siamese neural networks for one-shot image recognition." ICML Deep Learning Workshop. Vol. 2. 2015.
 
-Key data files (images and strokes):   
-data_background.mat   
-data_evaluation.mat   
-data_background_small1.mat   
-data_background_small2.mat   
+## Credits
 
-To compare with the one-shot classification results in our paper, run 'demo_classification.m' in the 'one-shot-classification' folder to demo a baseline model using Modified Hausdorff Distance.
+I would like to give credit to a blog post that introduced me to this paper. The blog post has also include code for this paper, despite having some differences regarding this repo (Adam optimizer is used, layerwise learning-rate option is not available). It is a great blog post go check it out: 
+
+- [One Shot Learning and Siamese Networks in Keras](https://sorenbouma.github.io/blog/oneshot/)
