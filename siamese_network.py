@@ -14,6 +14,7 @@ import matplotlib.gridspec as gridspec
 import numpy as np
 
 from omniglot_loader import OmniglotLoader
+from ts_loader import TSLoader
 from modified_sgd import Modified_SGD
 
 
@@ -62,12 +63,13 @@ class SiameseNetwork:
                     L2_dictionary['dense2']=0.01
             tensorboard_log_path: path to store the logs                
         """
-        self.input_shape = (105, 105, 1)  # Size of images
+        tf.compat.v1.disable_eager_execution()
+        self.input_shape = (256, 256, 4)  # Size of images
         self.model = []
         self.learning_rate = learning_rate
-        self.omniglot_loader = OmniglotLoader(
+        self.ts_loader = TSLoader(
             dataset_path=dataset_path, use_augmentation=use_augmentation, batch_size=batch_size)
-        self.summary_writer = tf.summary.FileWriter(tensorboard_log_path)
+        self.summary_writer = tf.summary.create_file_writer(tensorboard_log_path)
         self._construct_siamese_architecture(learning_rate_multipliers,
                                               l2_regularization_penalization)
 
@@ -150,7 +152,7 @@ class SiameseNetwork:
         """ Writes the logs to a tensorflow log file
 
         This allows us to see the loss curves and the metrics in tensorboard.
-        If we wrote every iteration, the training process would be slow, so 
+        If we wrote every iteration, the training process would be slow, so
         instead we write the logs every evaluate_each iteration.
 
         Arguments:
@@ -159,31 +161,23 @@ class SiameseNetwork:
                 iterations.
             train_accuracies: the same as train_losses but with the accuracies
                 in the training set.
-            validation_accuracy: accuracy in the current one-shot task in the 
+            validation_accuracy: accuracy in the current one-shot task in the
                 validation set
             evaluate each: number of iterations defined to evaluate the one-shot
                 tasks.
         """
 
-        summary = tf.Summary()
 
-        # Write to log file the values from the last evaluate_every iterations
-        for index in range(0, evaluate_each):
-            value = summary.value.add()
-            value.simple_value = train_losses[index]
-            value.tag = 'Train Loss'
+        with self.summary_writer.as_default():
+            for index in range(0, evaluate_each):
+                tf.summary.scalar('Train Loss', train_losses[index], step=current_iteration - evaluate_each + index + 1)
+                tf.summary.scalar('Train Accuracy', train_accuracies[index],
+                                  step=current_iteration - evaluate_each + index + 1)
 
-            value = summary.value.add()
-            value.simple_value = train_accuracies[index]
-            value.tag = 'Train Accuracy'
+                if index == (evaluate_each - 1):
+                    tf.summary.scalar('One-Shot Validation Accuracy', validation_accuracy,
+                                      step=current_iteration - evaluate_each + index + 1)
 
-            if index == (evaluate_each - 1):
-                value = summary.value.add()
-                value.simple_value = validation_accuracy
-                value.tag = 'One-Shot Validation Accuracy'
-
-            self.summary_writer.add_summary(
-                summary, current_iteration - evaluate_each + index + 1)
             self.summary_writer.flush()
 
     def train_siamese_network(self, number_of_iterations, support_set_size,
@@ -191,8 +185,8 @@ class SiameseNetwork:
                               model_name):
         """ Train the Siamese net
 
-        This is the main function for training the siamese net. 
-        In each every evaluate_each train iterations we evaluate one-shot tasks in 
+        This is the main function for training the siamese net.
+        In each every evaluate_each train iterations we evaluate one-shot tasks in
         validation and evaluation set. We also write to the log file.
 
         Arguments:
@@ -202,21 +196,21 @@ class SiameseNetwork:
             final_momentum: mu_j in the paper. Each layer starts at 0.5 momentum
                 but evolves linearly to mu_j
             momentum_slope: slope of the momentum evolution. In the paper we are
-                only told that this momentum evolves linearly. Because of that I 
+                only told that this momentum evolves linearly. Because of that I
                 defined a slope to be passed to the training.
             evaluate each: number of iterations defined to evaluate the one-shot
                 tasks.
             model_name: save_name of the model
 
-        Returns: 
+        Returns:
             Evaluation Accuracy
         """
 
         # First of all let's divide randomly the 30 train alphabets in train
         # and validation with 24 for training and 6 for validation
-        self.omniglot_loader.split_train_datasets()
-
-        # Variables that will store 100 iterations losses and accuracies
+        # self.omniglot_loader.split_train_datasets()
+        self.ts_loader.split_train_datasets()
+        # Variables that will store 1000 iterations losses and accuracies
         # after evaluate_each iterations these will be passed to tensorboard logs
         train_losses = np.zeros(shape=(evaluate_each))
         train_accuracies = np.zeros(shape=(evaluate_each))
@@ -232,7 +226,8 @@ class SiameseNetwork:
         for iteration in range(number_of_iterations):
 
             # train set
-            images, labels = self.omniglot_loader.get_train_batch()
+            # images, labels = self.omniglot_loader.get_train_batch()
+            images, labels = self.ts_loader.get_train_batch()
             train_loss, train_accuracy = self.model.train_on_batch(
                 images, labels)
 
@@ -267,8 +262,8 @@ class SiameseNetwork:
                     validation_accuracy, evaluate_each)
                 count = 0
 
-                # Some hyperparameters lead to 100%, although the output is almost the same in 
-                # all images. 
+                # Some hyperparameters lead to 100%, although the output is almost the same in
+                # all images.
                 if (validation_accuracy == 1.0 and train_accuracy == 0.5):
                     print('Early Stopping: Gradient Explosion')
                     print('Validation Accuracy = ' +
@@ -281,7 +276,7 @@ class SiameseNetwork:
                     if validation_accuracy > best_validation_accuracy:
                         best_validation_accuracy = validation_accuracy
                         best_accuracy_iteration = iteration
-                        
+
                         model_json = self.model.to_json()
 
                         if not os.path.exists('./models'):

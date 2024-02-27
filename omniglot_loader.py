@@ -197,9 +197,9 @@ class OmniglotLoader:
             random_permutation = np.random.permutation(number_of_pairs)
             labels = labels[random_permutation]
             pairs_of_images[0][:, :, :,
-                               :] = pairs_of_images[0][random_permutation, :, :, :]
+            :] = pairs_of_images[0][random_permutation, :, :, :]
             pairs_of_images[1][:, :, :,
-                               :] = pairs_of_images[1][random_permutation, :, :, :]
+            :] = pairs_of_images[1][random_permutation, :, :, :]
 
         return pairs_of_images, labels
 
@@ -227,13 +227,13 @@ class OmniglotLoader:
             self.train_dictionary[current_alphabet].keys())
         number_of_characters = len(available_characters)
 
-        bacth_images_path = []
+        batch_images_path = []
 
         # If the number of classes if less than self.batch_size/2
         # we have to repeat characters
         selected_characters_indexes = [random.randint(
-            0, number_of_characters-1) for i in range(self.batch_size)]
-        
+            0, number_of_characters - 1) for i in range(self.batch_size)]
+
         for index in selected_characters_indexes:
             current_character = available_characters[index]
             available_images = (self.train_dictionary[current_alphabet])[
@@ -246,15 +246,15 @@ class OmniglotLoader:
             image_indexes = random.sample(range(0, 20), 3)
             image = os.path.join(
                 image_path, available_images[image_indexes[0]])
-            bacth_images_path.append(image)
+            batch_images_path.append(image)
             image = os.path.join(
                 image_path, available_images[image_indexes[1]])
-            bacth_images_path.append(image)
+            batch_images_path.append(image)
 
             # Now let's take care of the pair of images from different characters
             image = os.path.join(
                 image_path, available_images[image_indexes[2]])
-            bacth_images_path.append(image)
+            batch_images_path.append(image)
             different_characters = available_characters[:]
             different_characters.pop(index)
             different_character_index = random.sample(
@@ -267,7 +267,7 @@ class OmniglotLoader:
                 self.dataset_path, 'images_background', current_alphabet, current_character)
             image = os.path.join(
                 image_path, available_images[image_indexes[0]])
-            bacth_images_path.append(image)
+            batch_images_path.append(image)
 
         self._current_train_alphabet_index += 1
 
@@ -275,7 +275,7 @@ class OmniglotLoader:
             self._current_train_alphabet_index = 0
 
         images, labels = self._convert_path_list_to_images_and_labels(
-            bacth_images_path, is_one_shot_task=False)
+            batch_images_path, is_one_shot_task=False)
 
         # Get random transforms if augmentation is on
         if self.use_augmentation:
@@ -400,7 +400,7 @@ class OmniglotLoader:
                 # Added this condition because noticed that sometimes the outputs
                 # of the classifier was almost the same in all images, meaning that
                 # the argmax would be always by defenition 0.
-                if np.argmax(probabilities) == 0 and probabilities.std()>0.01:
+                if np.argmax(probabilities) == 0 and probabilities.std() > 0.01:
                     accuracy = 1.0
                 else:
                     accuracy = 0.0

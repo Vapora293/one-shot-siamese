@@ -1,4 +1,3 @@
-from keras.legacy import interfaces
 import keras.backend as K
 from keras.optimizers import Optimizer
 
@@ -44,7 +43,6 @@ class Modified_SGD(Optimizer):
         self.lr_multipliers = lr_multipliers
         self.momentum_multipliers = momentum_multipliers
 
-    @interfaces.legacy_get_updates_support
     def get_updates(self, loss, params):
         grads = self.get_gradients(loss, params)
         self.updates = [K.update_add(self.iterations, 1)]
@@ -53,8 +51,7 @@ class Modified_SGD(Optimizer):
         if self.initial_decay > 0:
             lr *= (1. / (1. + self.decay * K.cast(self.iterations,
                                                   K.dtype(self.decay))))
-        
-        
+
         # momentum
         shapes = [K.int_shape(p) for p in params]
         moments = [K.zeros(shape) for shape in shapes]
@@ -72,7 +69,7 @@ class Modified_SGD(Optimizer):
             if self.momentum_multipliers != None:
                 if p.name in self.momentum_multipliers:
                     new_momentum = self.momentum * \
-                        self.momentum_multipliers[p.name]
+                                   self.momentum_multipliers[p.name]
                 else:
                     new_momentum = self.momentum
             else:

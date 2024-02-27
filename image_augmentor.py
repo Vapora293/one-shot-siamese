@@ -215,3 +215,26 @@ class ImageAugmentor:
             images[1][pair_index, :, :, :] = image_2
 
         return images
+
+    def get_random_transform_single_image(self, image):
+        """ Applies a random augmentation to a single image
+
+            Args:
+                image: image to be augmented
+
+            Returns:
+                The transformed image
+        """
+
+        random_numbers = np.random.random(size=(4))
+
+        if random_numbers[0] > 0.5:
+            image = self._perform_random_rotation(image)
+        if random_numbers[1] > 0.5:
+            image = self._perform_random_shear(image)
+        if random_numbers[2] > 0.5:
+            image = self._perform_random_shift(image)
+        if random_numbers[3] > 0.5:
+            image = self._perform_random_zoom(image)
+
+        return image

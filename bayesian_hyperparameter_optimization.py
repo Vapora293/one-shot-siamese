@@ -88,7 +88,7 @@ def main():
         current_model_number += 1
 
         support_set_size = 20
-        evaluate_each = 500
+        evaluate_each = 2
         number_of_train_iterations = 100000
         
         validation_accuracy = siamese_network.train_siamese_network(number_of_iterations=number_of_train_iterations,
