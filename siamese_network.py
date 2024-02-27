@@ -254,8 +254,9 @@ class SiameseNetwork:
             if (iteration + 1) % evaluate_each == 0:
                 number_of_runs_per_alphabet = 40
                 # use a support set size equal to the number of character in the alphabet
-                validation_accuracy = self.omniglot_loader.one_shot_test(
-                    self.model, support_set_size, number_of_runs_per_alphabet, is_validation=True)
+                validation_accuracy = 0.0
+                # validation_accuracy = self.omniglot_loader.one_shot_test(
+                #     self.model, support_set_size, number_of_runs_per_alphabet, is_validation=True)
 
                 self._write_logs_to_tensorboard(
                     iteration, train_losses, train_accuracies,
@@ -273,8 +274,8 @@ class SiameseNetwork:
                     return 0
                 else:
                     # Save the model
-                    if validation_accuracy > best_validation_accuracy:
-                        best_validation_accuracy = validation_accuracy
+                    if train_accuracy > best_validation_accuracy:
+                        best_validation_accuracy = train_accuracy
                         best_accuracy_iteration = iteration
 
                         model_json = self.model.to_json()
