@@ -2,8 +2,10 @@ import os
 import random
 import numpy as np
 import math
-from PIL import Image
+import pandas as pd
 
+from skimage import color
+from PIL import Image
 from image_augmentor import ImageAugmentor
 
 
@@ -45,13 +47,15 @@ class TSLoader:
         self.dataset_path = dataset_path
         self.train_dictionary = {}
         self.evaluation_dictionary = {}
-        self.image_width = 256
-        self.image_height = 256
+        self.image_width = 128
+        self.image_height = 128
         self.batch_size = batch_size
         self.use_augmentation = use_augmentation
         self._trainTS = []
         self._validationTS = []
         self._evaluationTS = []
+        self._current_validation_ts_index = 0
+        self._current_evaluation_ts_index = 0
 
         self.load_dataset()
 
@@ -69,7 +73,7 @@ class TSLoader:
         """
 
         train_path = os.path.join(self.dataset_path, 'train')
-        validation_path = os.path.join(self.dataset_path, 'eval')
+        validation_path = os.path.join(self.dataset_path, 'validation')
 
         # First let's take care of the train TS
         for trafficSign in os.listdir(train_path):
@@ -111,22 +115,23 @@ class TSLoader:
         availableTrafficSigns = list(self.train_dictionary.keys())
         numberOfTS = len(availableTrafficSigns)
 
-        train_indexes = random.sample(
-            range(0, numberOfTS - 1), int(0.8 * numberOfTS))
+        # train_indexes = random.sample(
+        #     range(0, numberOfTS - 1), int(0.8 * numberOfTS))
 
         # If we sort the indexes in reverse order we can pop them from the list
         # and don't care because the indexes do not change
-        train_indexes.sort(reverse=True)
+        # train_indexes.sort(reverse=True)
 
-        for index in train_indexes:
-            self._trainTS.append(availableTrafficSigns[index])
-            availableTrafficSigns.pop(index)
+        # for index in train_indexes:
+        #     self._trainTS.append(availableTrafficSigns[index])
+        #     availableTrafficSigns.pop(index)
 
         # The remaining TS are saved for validation
-        self._validationTS = availableTrafficSigns
+        self._trainTS = availableTrafficSigns
+        self._validationTS = list(self.evaluation_dictionary.keys())
         self._evaluationTS = list(self.evaluation_dictionary.keys())
 
-    def _convert_path_list_to_images_and_labels(self, path_list, is_one_shot_task):
+    def _convert_path_list_to_images_and_labels(self, path_list, is_one_shot_task, true_index=-1):
         """ Loads the images and its correspondent labels from the path
 
         Take the list with the path from the current batch, read the images and
@@ -168,6 +173,11 @@ class TSLoader:
                     labels[pair] = 1
                 else:
                     labels[pair] = 0
+            elif true_index != -1:
+                if pair == true_index:
+                    labels[pair] = 1
+                else:
+                    labels[pair] = 0
             else:
                 if pair == 0:
                     labels[pair] = 1
@@ -184,6 +194,61 @@ class TSLoader:
 
         return pairs_of_images, labels
 
+    def _convert_path_list_to_images_and_labels_gray(self, path_list, is_one_shot_task, true_index=-1):
+        """ Loads the images and its correspondent labels from the path
+
+        Take the list with the path from the current batch, read the images and
+        return the pairs of images and the labels
+        If the batch is from train or validation the labels are alternately 1's and
+        0's. If it is a evaluation set only the first pair has label 1
+
+        Arguments:
+            path_list: list of images to be loaded in this batch
+            is_one_shot_task: flag sinalizing if the batch is for one-shot task or if
+                it is for training
+
+        Returns:
+            pairs_of_images: pairs of images for the current batch
+            labels: correspondent labels -1 for same class, 0 for different classes
+
+        """
+        number_of_pairs = len(path_list)
+        pairs_of_images = [np.zeros((number_of_pairs,
+                                     self.image_height, self.image_height, 4)) for _ in range(2)]
+        labels = np.zeros((number_of_pairs, 1))
+
+        for pair in range(number_of_pairs):
+            image = Image.open(os.path.abspath(path_list[pair][0]))
+            grayscale_image = color.rgb2gray(image)
+
+            # Normalize or adjust as needed
+            grayscale_image = grayscale_image / grayscale_image.std() - grayscale_image.mean()
+
+            pairs_of_images[0][pair, :, :] = image  # Note: Squeezing dimensions
+            image = Image.open(path_list[pair][1])
+            grayscale_image = color.rgb2gray(image)
+
+            # Normalize or adjust as needed
+            grayscale_image = grayscale_image / grayscale_image.std() - grayscale_image.mean()
+
+            pairs_of_images[0][pair, :, :] = image  # Note: Squeezing dimensions
+            pairs_of_images[1][pair, :, :, :] = image
+
+            if not is_one_shot_task:
+                if (pair < number_of_pairs / 2):
+                    labels[pair] = 1
+                else:
+                    labels[pair] = 0
+            elif true_index != -1:
+                if pair == true_index:
+                    labels[pair] = 1
+                else:
+                    labels[pair] = 0
+            else:
+                if pair == 0:
+                    labels[pair] = 1
+                else:
+                    labels[pair] = 0
     def get_random_image_from_class(self, currentTS, numberOfImages, dataset):
         imagesOfCurrentTS = os.listdir(os.path.join(
             self.dataset_path, dataset, currentTS))
@@ -231,7 +296,7 @@ class TSLoader:
             labels: correspondent labels -1 for same class, 0 for different classes
 
         """
-        randomClasses = random.sample(range(0, len(self._trainTS)), 16)
+        randomClasses = random.sample(range(0, len(self._trainTS)), int(self.batch_size / 2))
         # currentTS = self._trainTS[self._current_train_alphabet_index]
         # numberOfTS = len(currentTS)
 
@@ -250,11 +315,14 @@ class TSLoader:
             currentTS = self._trainTS[index]
             differentTS = []
             differentTS.append(self.get_random_image_from_class(currentTS, 1, 'train'))
-            randomOtherTS = self._trainTS[random.randint(0, len(self._trainTS) - 1)]
-            differentTS.append(self.get_random_image_from_class(randomOtherTS, 1, 'train'))
+            while 1:
+                randomOtherTS = self._trainTS[random.randint(0, len(self._trainTS) - 1)]
+                if randomOtherTS != currentTS:
+                    differentTS.append(self.get_random_image_from_class(randomOtherTS, 1, 'train'))
+                    break
             batch_images_path.append(differentTS)
 
-        images, labels = self._convert_path_list_to_images_and_labels(
+        images, labels = self._convert_path_list_to_images_and_labels_gray(
             batch_images_path, is_one_shot_task=False)
 
         # Get random transforms if augmentation is on
@@ -280,65 +348,49 @@ class TSLoader:
         # Set some variables that will be different for validation and evaluation sets
         if is_validation:
             trafficSigns = self._validationTS
-            image_folder_name = 'train'
+            image_folder_name = 'validation'
             dictionary = self.train_dictionary
         else:
             trafficSigns = self._evaluationTS
-            image_folder_name = 'eval'
+            image_folder_name = 'validation'
             dictionary = self.evaluation_dictionary
 
         currentTSIndex = random.randint(0, len(trafficSigns) - 1)
         currentTS = trafficSigns[currentTSIndex]
-        availableTS = list(dictionary[currentTS].keys())
-        numberOfTS = len(availableTS)
 
-        batchImagePath = []
+        first_test_images = self.get_random_image_from_class(currentTS, 2, image_folder_name)
 
-        image_indexes = random.sample(range(0, ), 2)
+        batchImagePath = [first_test_images]
 
-        test_image = os.path.join(
-            image_path, available_images[image_indexes[0]])
-        batchImagePath.append(test_image)
-        image = os.path.join(
-            image_path, available_images[image_indexes[1]])
-        batchImagePath.append(image)
+        OtherTSIndexesfromSet = random.sample(range(0, len(trafficSigns)), int(self.batch_size / 2))
 
-        # Let's get our test image and a pair corresponding to
-        if support_set_size == -1:
-            number_of_support_characters = numberOfTS
-        else:
-            number_of_support_characters = support_set_size
+        for otherTSIndex in OtherTSIndexesfromSet:
+            otherTSClass = trafficSigns[otherTSIndex]
+            otherTSImage = self.get_random_image_from_class(otherTSClass, 1, image_folder_name)
+            batchImagePath.append([first_test_images[0], otherTSImage])
 
-        different_characters = availableTS[:]
-        different_characters.pop(test_character_index[0])
-
-        # There may be some alphabets with less than 20 characters
-        if numberOfTS < number_of_support_characters:
-            number_of_support_characters = numberOfTS
-
-        support_characters_indexes = random.sample(
-            range(0, numberOfTS - 1), number_of_support_characters - 1)
-
-        for index in support_characters_indexes:
-            current_character = different_characters[index]
-            available_images = (dictionary[currentTS])[
-                current_character]
-            image_path = os.path.join(
-                self.dataset_path, image_folder_name, currentTS, current_character)
-
-            image_indexes = random.sample(range(0, 20), 1)
-            image = os.path.join(
-                image_path, available_images[image_indexes[0]])
-            batchImagePath.append(test_image)
-            batchImagePath.append(image)
-
-        images, labels = self._convert_path_list_to_images_and_labels(
+        images, labels = self._convert_path_list_to_images_and_labels_gray(
             batchImagePath, is_one_shot_task=True)
 
         return images, labels
 
-    def one_shot_test(self, model, support_set_size, number_of_tasks_per_alphabet,
-                      is_validation):
+    def get_full_one_shot_batch(self, ts_class, traffic_signs, image_folder_name):
+        dictionary = self.evaluation_dictionary
+        first_test_image = self.get_random_image_from_class(ts_class, 1, image_folder_name)
+
+        batchImagePath = []
+
+        for otherTSClass in traffic_signs:
+            otherTSImage = self.get_random_image_from_class(otherTSClass, 1, image_folder_name)
+            batchImagePath.append([first_test_image, otherTSImage])
+
+        images, labels = self._convert_path_list_to_images_and_labels_gray(
+            batchImagePath, True, true_index=traffic_signs.index(ts_class))
+
+        return images, labels
+
+    def one_shot_test_old(self, model, support_set_size, number_of_tasks_per_ts,
+                          is_validation, output_dir):
         """ Prepare one-shot task and evaluate its performance
 
         Make one shot task in validation and evaluation sets
@@ -349,52 +401,222 @@ class TSLoader:
             mean_accuracy: mean accuracy for the one-shot task
         """
 
-        # Set some variables that depend on dataset
         if is_validation:
-            alphabets = self._validationTS
-            print('\nMaking One Shot Task on validation alphabets:')
+            trafficSigns = self._validationTS
+            print('\nMaking One Shot Task on validation traffic signs:')
+            subfolder = 'validation'
+            prefix = 'validation_'
         else:
-            alphabets = self._evaluationTS
-            print('\nMaking One Shot Task on evaluation alphabets:')
+            trafficSigns = self._evaluationTS
+            print('\nMaking One Shot Task on evaluation traffic signs:')
+            subfolder = 'evaluation'
+            prefix = 'evaluation_'
 
         mean_global_accuracy = 0
 
-        for alphabet in alphabets:
-            mean_alphabet_accuracy = 0
-            for _ in range(number_of_tasks_per_alphabet):
-                images, _ = self.get_one_shot_batch(
-                    support_set_size, is_validation=is_validation)
-                probabilities = model.predict_on_batch(images)
+        output_dir = os.path.join(output_dir, subfolder)
+        os.makedirs(output_dir, exist_ok=True)  # Ensure directory exists
+        existing_files = [f for f in os.listdir(output_dir) if f.startswith(prefix)]
+        if existing_files:
+            last_num = max([int(f[len(prefix):-4]) for f in existing_files])
+            file_num = last_num + 1
+        else:
+            file_num = 1
+        output_file = os.path.join(output_dir, prefix + str(file_num) + '.txt')
 
-                # Added this condition because noticed that sometimes the outputs
-                # of the classifier was almost the same in all images, meaning that
-                # the argmax would be always by defenition 0.
-                if np.argmax(probabilities) == 0 and probabilities.std() > 0.01:
-                    accuracy = 1.0
+        with open(output_file, 'a') as f:
+            for trafficSign in trafficSigns:
+                mean_ts_accuracy = 0
+                for _ in range(number_of_tasks_per_ts):
+                    images, _ = self.get_one_shot_batch(
+                        support_set_size, is_validation=is_validation)
+                    probabilities = model.predict_on_batch(images)
+
+                    # Added this condition because noticed that sometimes the outputs
+                    # of the classifier was almost the same in all images, meaning that
+                    # the argmax would be always by defenition 0.
+                    if np.argmax(probabilities) == 0 and probabilities.std() > 0.01:
+                        accuracy = 1.0
+                    else:
+                        accuracy = 0.0
+
+                    mean_ts_accuracy += accuracy
+                    mean_global_accuracy += accuracy
+
+                mean_ts_accuracy /= number_of_tasks_per_ts
+
+                print(trafficSign + ' traffic sign' + ', accuracy: ' +
+                      str(mean_ts_accuracy))
+                f.write(trafficSign + ' traffic sign' + ', accuracy: ' + str(mean_ts_accuracy) + '\n')
+                if is_validation:
+                    self._current_validation_ts_index += 1
                 else:
-                    accuracy = 0.0
+                    self._current_evaluation_ts_index += 1
 
-                mean_alphabet_accuracy += accuracy
-                mean_global_accuracy += accuracy
+            mean_global_accuracy /= (len(trafficSigns) *
+                                     number_of_tasks_per_ts)
 
-            mean_alphabet_accuracy /= number_of_tasks_per_alphabet
-
-            print(alphabet + ' alphabet' + ', accuracy: ' +
-                  str(mean_alphabet_accuracy))
-            if is_validation:
-                self._current_validation_alphabet_index += 1
-            else:
-                self._current_evaluation_alphabet_index += 1
-
-        mean_global_accuracy /= (len(alphabets) *
-                                 number_of_tasks_per_alphabet)
-
-        print('\nMean global accuracy: ' + str(mean_global_accuracy))
+            print('\nMean global accuracy: ' + str(mean_global_accuracy))
+            f.write('\nMean global accuracy: ' + str(mean_global_accuracy))
+            f.flush()  # Force write to disk
 
         # reset counter
         if is_validation:
-            self._current_validation_alphabet_index = 0
+            self._current_validation_ts_index = 0
         else:
-            self._current_evaluation_alphabet_index = 0
+            self._current_evaluation_ts_index = 0
 
         return mean_global_accuracy
+
+    def get_original_indices(self, arr, flat_indices):
+        original_indices = []
+        current_index = 0
+        for sub_array in arr:
+            if current_index in flat_indices:
+                original_indices.append(current_index)
+            current_index += 1
+        return original_indices
+
+    def get_flattened_values(self, arr):
+        flattened_values = []
+        for sub_array in arr:
+            flattened_values.append(sub_array[0])  # Extract the value from the size-1 ndarray
+        return flattened_values
+
+    def one_shot_test(self, model, support_set_size, number_of_tasks_per_ts,
+                      is_validation, output_dir):
+        """ Prepare one-shot task and evaluate its performance
+
+        Make one shot task in validation and evaluation sets
+        if support_set_size = -1 we perform a N-Way one-shot task with
+        N being the total of characters in the alphabet
+
+        Returns:
+            mean_accuracy: mean accuracy for the one-shot task
+        """
+
+        if is_validation:
+            trafficSigns = self._validationTS
+            print('\nMaking One Shot Task on validation traffic signs:')
+            subfolder = 'validation'
+            prefix = 'validation_'
+        else:
+            trafficSigns = self._evaluationTS
+            print('\nMaking One Shot Task on evaluation traffic signs:')
+            subfolder = 'evaluation'
+            prefix = 'evaluation_'
+
+        trafficSigns.sort()
+
+        mean_global_accuracy = 0
+
+        output_dir = os.path.join(output_dir, subfolder)
+        os.makedirs(output_dir, exist_ok=True)  # Ensure directory exists
+        existing_files = [f for f in os.listdir(output_dir) if f.startswith(prefix)]
+        if existing_files:
+            last_num = max([int(f[len(prefix):-4]) for f in existing_files])
+            file_num = last_num + 1
+        else:
+            file_num = 1
+        output_file = os.path.join(output_dir, prefix + str(file_num) + '.txt')
+
+        with open(output_file, 'a') as f:
+            for trafficSign in trafficSigns:
+                mean_ts_accuracy = 0
+                for _ in range(number_of_tasks_per_ts):
+                    images, _ = self.get_full_one_shot_batch(trafficSign, trafficSigns, subfolder)
+                    probabilities = model.predict_on_batch(images)
+                    top_10_indices_flat = np.argsort(self.get_flattened_values(probabilities))[-10:][::-1]
+                    top_10_classes = []
+                    for index in top_10_indices_flat:
+                        top_10_classes.append(trafficSigns[index])
+                    accuracy = 0.0
+                    for index, trafficSignToCompare in enumerate(top_10_classes):
+                        if trafficSignToCompare == trafficSign:
+                            accuracy = 1.0 - (index / 10)
+                            print(accuracy)
+                    # if trafficSign in top_10_classes:
+                    #     accuracy = 1.0
+                    # else:
+                    #     accuracy = 0.0
+                    mean_ts_accuracy += accuracy
+                    mean_global_accuracy += accuracy
+
+                mean_ts_accuracy /= number_of_tasks_per_ts
+
+                print(trafficSign + ' traffic sign' + ', accuracy: ' +
+                      str(mean_ts_accuracy))
+                f.write(trafficSign + ' traffic sign' + ', accuracy: ' + str(mean_ts_accuracy) + '\n')
+                if is_validation:
+                    self._current_validation_ts_index += 1
+                else:
+                    self._current_evaluation_ts_index += 1
+
+            mean_global_accuracy /= (len(trafficSigns) *
+                                     number_of_tasks_per_ts)
+
+            print('\nMean global accuracy: ' + str(mean_global_accuracy))
+            f.write('\nMean global accuracy: ' + str(mean_global_accuracy))
+            f.flush()  # Force write to disk
+
+        # reset counter
+        if is_validation:
+            self._current_validation_ts_index = 0
+        else:
+            self._current_evaluation_ts_index = 0
+
+        return mean_global_accuracy
+
+    def get_all_classes_test(self, model, number_of_tasks_per_ts, output_dir):
+        self._evaluationTS = list(self.train_dictionary.keys())
+
+        """ Prepare one-shot task and evaluate its performance
+
+        Make one shot task in validation and evaluation sets
+        if support_set_size = -1 we perform a N-Way one-shot task with
+        N being the total of characters in the alphabet
+
+        Returns:
+            mean_accuracy: mean accuracy for the one-shot task
+        """
+        trafficSigns = self._validationTS
+        trafficSigns.sort()
+        trafficSigns_length = len(trafficSigns)
+        print('\nMaking One Shot Task on validation traffic signs:')
+        subfolder = 'validation'
+        prefix = 'full_test_'
+
+        mean_global_accuracy = 0
+
+        output_dir = os.path.join(output_dir, subfolder)
+        os.makedirs(output_dir, exist_ok=True)  # Ensure directory exists
+        existing_files = [f for f in os.listdir(output_dir) if f.startswith(prefix)]
+        if existing_files:
+            last_num = max([int(f[len(prefix):-4]) for f in existing_files])
+            file_num = last_num + 1
+        else:
+            file_num = 1
+        output_file = os.path.join(output_dir, prefix + str(file_num) + '.txt')
+
+        similarity_matrix = np.zeros((trafficSigns_length, trafficSigns_length))
+        with open(output_file, 'a') as f:
+            for ref_class_index, trafficSign in enumerate(trafficSigns):
+                current_matrix = np.zeros((trafficSigns_length, 1))
+                mean_ts_accuracy = 0
+                for _ in range(number_of_tasks_per_ts):
+                    images, _ = self.get_full_one_shot_batch(trafficSign, trafficSigns, 'validation')
+                    probabilities = model.predict_on_batch(images)
+                    # I need to add all the values of probabilities based on index into the current_matrix
+                    for i in range(trafficSigns_length):
+                        current_matrix[i] += probabilities[i]
+                for i in range(trafficSigns_length):
+                    current_matrix[i] /= number_of_tasks_per_ts
+                print(f"successfully appended class {trafficSign}")
+                # Now I need to add the current_matrix to the similarity_matrix as a next row
+                similarity_matrix[ref_class_index] = current_matrix.T
+            # Create a DataFrame for better output
+            df = pd.DataFrame(similarity_matrix, index=trafficSigns, columns=trafficSigns)
+
+            # Save as CSV for readability
+            df.to_csv(os.path.join(output_dir, 'similarity_matrix_ts_9.csv'))
+            print('Similarity matrix saved as CSV')

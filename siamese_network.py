@@ -4,7 +4,9 @@ import keras.backend as K
 from keras.models import Model, Sequential
 from keras.layers import Conv2D, MaxPool2D, Flatten, Dense, Input, Subtract, Lambda
 from keras.optimizers import Adam, SGD
+# from keras import optimizers
 from keras.regularizers import l2
+# from keras import regularizers
 import keras.backend as K
 
 import tensorflow as tf
@@ -31,18 +33,18 @@ class SiameseNetwork:
         summary_writer: tensorflow writer to store the logs
     """
 
-    def __init__(self, dataset_path,  learning_rate, batch_size, use_augmentation,
+    def __init__(self, dataset_path, learning_rate, batch_size, use_augmentation,
                  learning_rate_multipliers, l2_regularization_penalization, tensorboard_log_path):
         """Inits SiameseNetwork with the provided values for the attributes.
 
-        It also constructs the siamese network architecture, creates a dataset 
+        It also constructs the siamese network architecture, creates a dataset
         loader and opens the log file.
 
         Arguments:
-            dataset_path: path of Omniglot dataset    
+            dataset_path: path of Omniglot dataset
             learning_rate: SGD learning rate
             batch_size: size of the batch to be used in training
-            use_augmentation: boolean that allows us to select if data augmentation 
+            use_augmentation: boolean that allows us to select if data augmentation
                 is used or not
             learning_rate_multipliers: learning-rate multipliers (relative to the learning_rate
                 chosen) that will be applied to each fo the conv and dense layers
@@ -61,20 +63,20 @@ class SiameseNetwork:
                     L2_dictionary['conv2']=0.001
                     L2_dictionary['dense1']=0.001
                     L2_dictionary['dense2']=0.01
-            tensorboard_log_path: path to store the logs                
+            tensorboard_log_path: path to store the logs
         """
-        tf.compat.v1.disable_eager_execution()
-        self.input_shape = (256, 256, 4)  # Size of images
+        # tf.compat.v1.disable_eager_execution()
+        self.input_shape = (128, 128, 4)  # Size of images
         self.model = []
         self.learning_rate = learning_rate
         self.ts_loader = TSLoader(
             dataset_path=dataset_path, use_augmentation=use_augmentation, batch_size=batch_size)
         self.summary_writer = tf.summary.create_file_writer(tensorboard_log_path)
         self._construct_siamese_architecture(learning_rate_multipliers,
-                                              l2_regularization_penalization)
+                                             l2_regularization_penalization)
 
     def _construct_siamese_architecture(self, learning_rate_multipliers,
-                                         l2_regularization_penalization):
+                                        l2_regularization_penalization):
         """ Constructs the siamese architecture and stores it in the class
 
         Arguments:
@@ -119,6 +121,13 @@ class SiameseNetwork:
                       l2_regularization_penalization['Dense1']),
                   name='Dense1'))
 
+        # Filter Visualization for TensorBoard
+        for layer in convolutional_net.layers:
+            if 'Conv' in layer.name:
+                filters = layer.get_weights()[0]
+                filter_vis = self.visualize_filters(filters)  # We'll define this function next
+                tf.summary.image(layer.name, filter_vis, max_outputs=filters.shape[3])
+
         # Now the pairs of images
         input_image_1 = Input(self.input_shape)
         input_image_2 = Input(self.input_shape)
@@ -141,14 +150,30 @@ class SiameseNetwork:
         optimizer = Modified_SGD(
             lr=self.learning_rate,
             lr_multipliers=learning_rate_multipliers,
-            momentum=0.5)
+            momentum=0.0)
 
         self.model.compile(loss='binary_crossentropy', metrics=['binary_accuracy'],
                            optimizer=optimizer)
 
+    def visualize_filters(self, filters, reshape_shape=(10, 10)):
+        """Reshapes and transposes convolutional filters for visualization.
+
+        Args:
+            filters: A 4D Tensor of convolutional filters (kernel_size, kernel_size, in_channels, out_channels)
+            reshape_shape: Shape to reshape the visualization grid
+
+        Returns:
+            A reshaped 4D Tensor ready for `tf.summary.image`
+        """
+        filters = np.squeeze(filters)  # May need squeezing if there's a batch dim
+        filters = np.transpose(filters, (3, 0, 1, 2))  # Transpose for visualization
+        n_groups, n_rows, n_cols, _ = filters.shape
+        # filters = filters.reshape(n_groups * n_rows, n_cols, *reshape_shape)
+        return tf.expand_dims(filters, -1)  # Add a channel dimension for grayscale
+
     def _write_logs_to_tensorboard(self, current_iteration, train_losses,
-                                    train_accuracies, validation_accuracy,
-                                    evaluate_each):
+                                   train_accuracies, validation_accuracy,
+                                   evaluate_each):
         """ Writes the logs to a tensorflow log file
 
         This allows us to see the loss curves and the metrics in tensorboard.
@@ -167,8 +192,17 @@ class SiameseNetwork:
                 tasks.
         """
 
-
         with self.summary_writer.as_default():
+            # for layer in self.model.layers:
+            #     for layer2 in layer[2]:
+            #         if 'Conv' in layer2.name:
+            #             weights = layer2.get_weights()[0]  # Assuming convolutional layers
+            #             # Reshape and format weights as needed for visualization
+            #             tf.summary.image(layer2.name, formatted_weights, step=current_iteration)
+            #         for weight_and_grad in zip(layer2.trainable_weights, gradients):
+            #             weight_name = weight_and_grad[0].name.replace(':', '_')
+            #             tf.summary.histogram(weight_name, weight_and_grad[1], step=current_iteration)
+            # tf.summary.histogram('activation_layer_name', activations, step=current_iteration)
             for index in range(0, evaluate_each):
                 tf.summary.scalar('Train Loss', train_losses[index], step=current_iteration - evaluate_each + index + 1)
                 tf.summary.scalar('Train Accuracy', train_accuracies[index],
@@ -182,7 +216,7 @@ class SiameseNetwork:
 
     def train_siamese_network(self, number_of_iterations, support_set_size,
                               final_momentum, momentum_slope, evaluate_each,
-                              model_name):
+                              model_name, general_output_file_path):
         """ Train the Siamese net
 
         This is the main function for training the siamese net.
@@ -215,12 +249,11 @@ class SiameseNetwork:
         train_losses = np.zeros(shape=(evaluate_each))
         train_accuracies = np.zeros(shape=(evaluate_each))
         count = 0
-        earrly_stop = 0
         # Stop criteria variables
         best_validation_accuracy = 0.0
         best_accuracy_iteration = 0
         validation_accuracy = 0.0
-
+        general_output_file = open(general_output_file_path + 'general.txt', 'a')
 
         # Train loop
         for iteration in range(number_of_iterations):
@@ -234,8 +267,8 @@ class SiameseNetwork:
             # Decay learning rate 1 % per 500 iterations (in the paper the decay is
             # 1% per epoch). Also update linearly the momentum (starting from 0.5 to 1)
             if (iteration + 1) % 500 == 0:
-                K.set_value(self.model.optimizer.lr, K.get_value(
-                    self.model.optimizer.lr) * 0.99)
+                current_lr = K.get_value(self.model.optimizer._learning_rate)
+                K.set_value(self.model.optimizer._learning_rate, current_lr * 0.99)
             if K.get_value(self.model.optimizer.momentum) < final_momentum:
                 K.set_value(self.model.optimizer.momentum, K.get_value(
                     self.model.optimizer.momentum) + momentum_slope)
@@ -245,18 +278,23 @@ class SiameseNetwork:
 
             # validation set
             count += 1
-            print('Iteration %d/%d: Train loss: %f, Train Accuracy: %f, lr = %f' %
-                  (iteration + 1, number_of_iterations, train_loss, train_accuracy, K.get_value(
-                      self.model.optimizer.lr)))
+            general_output_file.write('\nIteration %d/%d: Train loss: %f, Train Accuracy: %f, lr = %f' %
+                                      (iteration + 1, number_of_iterations, train_loss, train_accuracy,
+                                       K.get_value(self.model.optimizer.lr)))
+            if count % 5 == 0:
+                print('Iteration %d/%d: Train loss: %f, Train Accuracy: %f, lr = %f' %
+                      (iteration + 1, number_of_iterations, train_loss, train_accuracy, K.get_value(
+                          self.model.optimizer.lr)))
+            general_output_file.flush()  # Force write to disk
 
             # Each 100 iterations perform a one_shot_task and write to tensorboard the
             # stored losses and accuracies
-            if (iteration + 1) % evaluate_each == 0:
-                number_of_runs_per_alphabet = 40
+            if (iteration + 1) % evaluate_each == 100:
+                number_of_runs_per_alphabet = 5
                 # use a support set size equal to the number of character in the alphabet
-                validation_accuracy = 0.0
-                # validation_accuracy = self.omniglot_loader.one_shot_test(
-                #     self.model, support_set_size, number_of_runs_per_alphabet, is_validation=True)
+                validation_accuracy = self.ts_loader.one_shot_test(
+                    self.model, support_set_size, number_of_runs_per_alphabet, is_validation=True,
+                    output_dir=general_output_file_path)
 
                 self._write_logs_to_tensorboard(
                     iteration, train_losses, train_accuracies,
@@ -266,6 +304,9 @@ class SiameseNetwork:
                 # Some hyperparameters lead to 100%, although the output is almost the same in
                 # all images.
                 if (validation_accuracy == 1.0 and train_accuracy == 0.5):
+                    general_output_file.write('Early Stopping: Gradient Explosion')
+                    general_output_file.write('\nValidation Accuracy = ' +
+                                              str(best_validation_accuracy))
                     print('Early Stopping: Gradient Explosion')
                     print('Validation Accuracy = ' +
                           str(best_validation_accuracy))
@@ -282,18 +323,32 @@ class SiameseNetwork:
 
                         if not os.path.exists('./models'):
                             os.makedirs('./models')
-                        with open('models/' + model_name + '.json', "w") as json_file:
+                        with open('models/' + model_name + str(iteration) + '.json', "w") as json_file:
                             json_file.write(model_json)
-                        self.model.save_weights('models/' + model_name + '.h5')
+                        self.model.save_weights('models/' + model_name + str(iteration) + '.h5')
+
+                    if (iteration % (evaluate_each * 10) == 100):
+                        model_json = self.model.to_json()
+
+                        if not os.path.exists('./models'):
+                            os.makedirs('./models')
+                        with open('models/' + model_name + str(iteration) + '.json', "w") as json_file:
+                            json_file.write(model_json)
+                        self.model.save_weights('models/' + model_name + str(iteration) + '.h5')
 
             # If accuracy does not improve for 10000 batches stop the training
-            if iteration - best_accuracy_iteration > 10000:
+            if iteration - best_accuracy_iteration > evaluate_each * 100:
                 print(
-                    'Early Stopping: validation accuracy did not increase for 10000 iterations')
+                    'Early Stopping: validation accuracy did not increase for x iterations')
                 print('Best Validation Accuracy = ' +
                       str(best_validation_accuracy))
                 print('Validation Accuracy = ' + str(best_validation_accuracy))
+                general_output_file.write('Early Stopping: validation accuracy did not increase for 10000 iterations')
+                general_output_file.write('Best Validation Accuracy = ' +
+                                          str(best_validation_accuracy))
+                general_output_file.write('Validation Accuracy = ' + str(best_validation_accuracy))
                 break
 
-        print('Trained Ended!')
+        print('Training Ended!')
+        general_output_file.write('\nTraining Ended!')
         return best_validation_accuracy

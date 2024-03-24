@@ -8,7 +8,7 @@ current_model_number = 0
 
 
 def main():
-
+    general_output_path = './logs/bayesian/'
     hyperparameters = [{'name': 'learning_rate', 'type': 'continuous',
                         'domain': (10e-6, 10e-4)},
                        {'name': 'momentum', 'type': 'continuous',
@@ -35,9 +35,10 @@ def main():
                         'domain': (0, 0.0001, 0.001, 0.01, 0.1)},
                        {'name': 'l2_penalization_Dense1', 'type': 'discrete',
                         'domain': (0, 0.0001, 0.001, 0.01, 0.1)}]
+    general_output_file = open(general_output_path + 'general.txt', 'a')
 
     def bayesian_optimization_function(x):
-        dataset_path = 'Omniglot Dataset'
+        dataset_path = 'ts_new_copy'
 
         current_learning_rate = float(x[:, 0])
         current_momentum = float(x[:, 1])
@@ -53,13 +54,13 @@ def main():
         current_conv4_penalization = float(x[:, 11])
         current_dense1_penalization = float(x[:, 12])
 
-        model_name = 'siamese_net_lr_' + str(current_learning_rate) + \
-            'momentum_' + str(current_momentum) + '_slope_' + \
-            str(current_momentum_slope)
+        model_name = 'siamese_net_ts_3_lr' + str(current_learning_rate) + \
+                     'momentum_' + str(current_momentum) + '_slope_' + \
+                     str(current_momentum_slope)
 
         global current_model_number
         current_model_number += 1
-        tensorboard_log_path = './logs/' + str(current_model_number)
+        tensorboard_log_path = './logs/bayesian_2/' + str(current_model_number)
 
         # Learning Rate multipliers for each layer
         learning_rate_multipliers = {}
@@ -88,33 +89,41 @@ def main():
         current_model_number += 1
 
         support_set_size = 20
-        evaluate_each = 2
-        number_of_train_iterations = 100000
-        
+        evaluate_each = 100
+        number_of_train_iterations = 500
+
         validation_accuracy = siamese_network.train_siamese_network(number_of_iterations=number_of_train_iterations,
                                                                     support_set_size=support_set_size,
                                                                     final_momentum=current_momentum,
                                                                     momentum_slope=current_momentum_slope,
                                                                     evaluate_each=evaluate_each,
-                                                                    model_name=model_name)
-
+                                                                    model_name=model_name,
+                                                                    general_output_file_path=general_output_path)
         if validation_accuracy == 0:
             evaluation_accuracy = 0
-        else:        
+        else:
             # Load the weights with best validation accuracy
             siamese_network.model.load_weights('models/' + model_name + '.h5')
-            evaluation_accuracy = siamese_network.omniglot_loader.one_shot_test(siamese_network.model,
-                                                                                20, 40, False)
+            # siamese_network.model.load_weights('./models/siamese_net_ts.h5')
+            evaluation_accuracy = siamese_network.ts_loader.one_shot_test_old(siamese_network.model,
+                                                                              20, 40, False, general_output_file)
+        general_output_file.write("Model: " + model_name +
+                                  ' | Accuracy: ' + str(evaluation_accuracy))
+        general_output_file.flush()
         print("Model: " + model_name +
               ' | Accuracy: ' + str(evaluation_accuracy))
         K.clear_session()
         return 1 - evaluation_accuracy
 
+    print("som dokonca tu")
     optimizer = GPyOpt.methods.BayesianOptimization(
         f=bayesian_optimization_function, domain=hyperparameters)
 
     optimizer.run_optimization(max_iter=100)
 
+    general_output_file.write("optimized parameters: {0}".format(optimizer.x_opt))
+    general_output_file.write("optimized eval_accuracy: {0}".format(1 - optimizer.fx_opt))
+    general_output_file.flush()
     print("optimized parameters: {0}".format(optimizer.x_opt))
     print("optimized eval_accuracy: {0}".format(1 - optimizer.fx_opt))
 
