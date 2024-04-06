@@ -1,5 +1,6 @@
 import keras.backend as K
 from keras.optimizers import Optimizer
+import tensorflow as tf
 
 
 class Modified_SGD(Optimizer):
@@ -26,26 +27,59 @@ class Modified_SGD(Optimizer):
             LR_mult_dict['c2']=1
             LR_mult_dict['d1']=2
             LR_mult_dict['d2']=2
-        momentum_multipliers: dictionary with momentum for a specific layer 
+        momentum_multipliers: dictionary with momentum for a specific layer
         (similar to the lr_multipliers)
     """
 
     def __init__(self, lr=0.01, momentum=0., decay=0.,
                  nesterov=False, lr_multipliers=None, momentum_multipliers=None, **kwargs):
-        super(Modified_SGD, self).__init__(**kwargs)
+        super(Modified_SGD, self).__init__("SGD", **kwargs)
         with K.name_scope(self.__class__.__name__):
             self.iterations = K.variable(0, dtype='int64', name='iterations')
-            self.lr = K.variable(lr, name='lr')
-            self.momentum = K.variable(momentum, name='momentum')
-            self.decay = K.variable(decay, name='decay')
+            self._learning_rate = K.variable(lr, name='lr')
+            # self.lr = K.variable(_learning_rate, name='lr')
+            if momentum_multipliers is not None:
+                for layer_name, mult in momentum_multipliers.items():
+                    setattr(self, 'm_' + layer_name, K.variable(momentum * mult, name='m_' + layer_name))
+            else:
+                self.momentum = K.variable(momentum, name='momentum')
+                self.decay = K.variable(decay, name='decay')
+        self.m_variables = []  # List for momentum accumulators
         self.initial_decay = decay
         self.nesterov = nesterov
         self.lr_multipliers = lr_multipliers
         self.momentum_multipliers = momentum_multipliers
 
+    def get_weights(self):
+        if self.momentum_multipliers is not None:
+            moms = []
+            for layer_name in self.momentum_multipliers.keys():
+                moms.append(K.get_value(getattr(self, 'm_' + layer_name)))
+            return moms
+        else:
+            return []
+
+    @tf.function
+    def update_step(self, gradient, variable):
+        new_value = variable - self._learning_rate * gradient
+        variable.assign(new_value)
+
+    def _resource_apply_dense(self, grad, var, apply_state=None):
+        return self._resource_apply(var, grad, apply_state)
+
+    def _resource_apply_sparse(self, grad, var, indices, apply_state=None):
+        return self._resource_apply(var, grad, apply_state, indices)
+
     def get_updates(self, loss, params):
         grads = self.get_gradients(loss, params)
+        current_lr = self._learning_rate.numpy()
+        self._learning_rate.assign(current_lr * 0.99)  # Update the value
         self.updates = [K.update_add(self.iterations, 1)]
+
+        for p in params:
+            new_m = K.zeros(K.int_shape(p), dtype=K.dtype(p))
+            self.m_variables.append(new_m)
+            print('Created accumulator for parameter:', p.name)
 
         lr = self.lr
         if self.initial_decay > 0:
@@ -99,3 +133,4 @@ class Modified_SGD(Optimizer):
                   'momentum_multipliers': float(K.get_value(self.momentum_multipliers))}
         base_config = super(Modified_SGD, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+

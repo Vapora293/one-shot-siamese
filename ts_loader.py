@@ -2,10 +2,10 @@ import os
 import random
 import numpy as np
 import math
-import pandas as pd
-
-from skimage import color
 from PIL import Image
+import pandas as pd
+import pickle
+
 from image_augmentor import ImageAugmentor
 
 
@@ -31,7 +31,7 @@ class TSLoader:
 
     """
 
-    def __init__(self, dataset_path, use_augmentation, batch_size):
+    def __init__(self, dataset_path, use_augmentation, batch_size, grayscale=False):
         """Inits OmniglotLoader with the provided values for the attributes.
 
         It also creates an Image Augmentor object and loads the train set and
@@ -49,6 +49,7 @@ class TSLoader:
         self.evaluation_dictionary = {}
         self.image_width = 128
         self.image_height = 128
+        self.dimensions = 3
         self.batch_size = batch_size
         self.use_augmentation = use_augmentation
         self._trainTS = []
@@ -56,8 +57,9 @@ class TSLoader:
         self._evaluationTS = []
         self._current_validation_ts_index = 0
         self._current_evaluation_ts_index = 0
-
+        self.grayscale = grayscale
         self.load_dataset()
+        self.scalers = [pickle.load(open(f'scaler_{i}.pkl', 'rb')) for i in range(4)]
 
         if (self.use_augmentation):
             self.image_augmentor = self.createAugmentor()
@@ -112,26 +114,12 @@ class TSLoader:
 
         """
 
-        availableTrafficSigns = list(self.train_dictionary.keys())
-        numberOfTS = len(availableTrafficSigns)
-
-        # train_indexes = random.sample(
-        #     range(0, numberOfTS - 1), int(0.8 * numberOfTS))
-
-        # If we sort the indexes in reverse order we can pop them from the list
-        # and don't care because the indexes do not change
-        # train_indexes.sort(reverse=True)
-
-        # for index in train_indexes:
-        #     self._trainTS.append(availableTrafficSigns[index])
-        #     availableTrafficSigns.pop(index)
-
         # The remaining TS are saved for validation
-        self._trainTS = availableTrafficSigns
+        self._trainTS = list(self.train_dictionary.keys())
         self._validationTS = list(self.evaluation_dictionary.keys())
         self._evaluationTS = list(self.evaluation_dictionary.keys())
 
-    def _convert_path_list_to_images_and_labels(self, path_list, is_one_shot_task, true_index=-1):
+    def _convert_path_list_to_images_and_labels(self, path_list, is_one_shot_task, true_index=None):
         """ Loads the images and its correspondent labels from the path
 
         Take the list with the path from the current batch, read the images and
@@ -150,33 +138,84 @@ class TSLoader:
 
         """
         number_of_pairs = len(path_list)
-        pairs_of_images = [np.zeros((number_of_pairs,
-                                     self.image_height, self.image_height, 4)) for _ in range(2)]
         labels = np.zeros((number_of_pairs, 1))
 
-        for pair in range(number_of_pairs):
-            image = Image.open(os.path.abspath(path_list[pair][0]))
-            image = np.asarray(image).astype(np.float64)
-            image = image / image.std() - image.mean()
+        if self.grayscale:
+            pairs_of_images = [np.zeros((number_of_pairs,
+                                         self.image_height, self.image_height)) for _ in range(2)]
+        else:
+            pairs_of_images = [np.zeros((number_of_pairs,
+                                         self.image_height, self.image_height, self.dimensions)) for _ in range(2)]
 
-            pairs_of_images[0][pair, :, :, :] = image
-            try:
-                image = Image.open(path_list[pair][1])
+        for pair in range(number_of_pairs):
+            if self.grayscale:
+                image = Image.open(os.path.abspath(path_list[pair][0])).convert('L')  # Convert to grayscale ('L' mode)
                 image = np.asarray(image).astype(np.float64)
-                image = image / image.std() - image.mean()
-            except:
-                image = self.image_augmentor.get_random_transform_single_image(image)
-            pairs_of_images[1][pair, :, :, :] = image
+
+                # image = (image - image.min()) / (image.max() - image.min())  # Scale to 0-1
+                # image = image / image.std() - image.mean()
+                pairs_of_images[0][pair] = image
+
+                image = Image.open(os.path.abspath(path_list[pair][1])).convert('L')  # Convert to grayscale ('L' mode)
+                image = np.asarray(image).astype(np.float64)
+                # image = (image - image.min()) / (image.max() - image.min())  # Scale to 0-1
+                # image = image / image.std() - image.mean()
+                pairs_of_images[1][pair] = image
+            else:
+                image = Image.open(os.path.abspath(path_list[pair][0])).convert('RGB')
+                image = np.asarray(image).astype(np.float64)
+                image_gayscale = Image.open(os.path.abspath(
+                    path_list[pair][0].replace(self.dataset_path, "ts_4_norm"))).convert('L')
+                image_gayscale = np.asarray(image_gayscale).astype(np.float64)
+                image_gayscale = image_gayscale[..., np.newaxis]  # (128, 128, 1)
+                image = np.concatenate((image, image_gayscale), axis=2)  # (128, 128, 4)
+                for channel in range(4):
+                    image_reshaped = image[..., channel].reshape(-1, 1)  # Reshape for a single channel
+                    scaler = self.scalers[channel]
+                    transformed_array = scaler.transform(image_reshaped).reshape(128, 128)
+                    image[..., channel] = transformed_array
+                pairs_of_images[0][pair, :, :, :] = image
+
+                image = Image.open(os.path.abspath(path_list[pair][1])).convert('RGB')
+                image = np.asarray(image).astype(np.float64)
+                image_gayscale = Image.open(
+                    os.path.abspath(
+                        path_list[pair][1].replace(self.dataset_path, "ts_4_norm"))).convert(
+                    'L')
+                image_gayscale = np.asarray(image_gayscale).astype(np.float64)
+                image_gayscale = image_gayscale[..., np.newaxis]  # (128, 128, 1)
+                image = np.concatenate((image, image_gayscale), axis=2)  # (128, 128, 4)
+                for channel in range(4):
+                    image_reshaped = image[..., channel].reshape(-1, 1)  # Reshape for a single channel
+                    scaler = self.scalers[channel]
+                    transformed_array = scaler.transform(image_reshaped).reshape(128, 128)
+                    image[..., channel] = transformed_array
+                pairs_of_images[1][pair, :, :, :] = image
+                # OLD COLOUR
+                # image = Image.open(os.path.abspath(path_list[pair][0]))
+                # image = np.asarray(image).astype(np.float64)
+                # # image = (image - image.min()) / (image.max() - image.min())  # Scale to 0-1
+                # # image = image / image.std() - image.mean()
+                # pairs_of_images[0][pair, :, :, :] = image
+                #
+                # image = Image.open(os.path.abspath(path_list[pair][1]))
+                # image = np.asarray(image).astype(np.float64)
+                # # image = (image - image.min()) / (image.max() - image.min())  # Scale to 0-1
+                # # image = image / image.std() - image.mean()
+                # pairs_of_images[1][pair, :, :, :] = image
 
             if not is_one_shot_task:
                 if (pair < number_of_pairs / 2):
                     labels[pair] = 1
                 else:
                     labels[pair] = 0
-            elif true_index != -1:
-                if pair == true_index:
-                    labels[pair] = 1
-                else:
+            if true_index is not None:
+                if true_index != -1:
+                    if pair == true_index:
+                        labels[pair] = 1
+                    else:
+                        labels[pair] = 0
+                if true_index == -1:
                     labels[pair] = 0
             else:
                 if pair == 0:
@@ -184,17 +223,19 @@ class TSLoader:
                 else:
                     labels[pair] = 0
 
-        if not is_one_shot_task:
-            random_permutation = np.random.permutation(number_of_pairs)
-            labels = labels[random_permutation]
-            pairs_of_images[0][:, :, :,
-            :] = pairs_of_images[0][random_permutation, :, :, :]
-            pairs_of_images[1][:, :, :,
-            :] = pairs_of_images[1][random_permutation, :, :, :]
+        # if not is_one_shot_task:
+        # random_permutation = np.random.permutation(number_of_pairs)
+        # labels = labels[random_permutation]
+        # pairs_of_images[0][:] = pairs_of_images[0][random_permutation]
+        # pairs_of_images[1][:] = pairs_of_images[1][random_permutation]
+        # pairs_of_images[0][:, :, :,
+        # :] = pairs_of_images[0][random_permutation, :, :, :]
+        # pairs_of_images[1][:, :, :,
+        # :] = pairs_of_images[1][random_permutation, :, :, :]
 
         return pairs_of_images, labels
 
-    def _convert_path_list_to_images_and_labels_gray(self, path_list, is_one_shot_task, true_index=-1):
+    def convert_path_list_to_images_and_labels_rgb_singlearray(self, path_list):
         """ Loads the images and its correspondent labels from the path
 
         Take the list with the path from the current batch, read the images and
@@ -210,45 +251,18 @@ class TSLoader:
         Returns:
             pairs_of_images: pairs of images for the current batch
             labels: correspondent labels -1 for same class, 0 for different classes
-
         """
-        number_of_pairs = len(path_list)
-        pairs_of_images = [np.zeros((number_of_pairs,
-                                     self.image_height, self.image_height, 4)) for _ in range(2)]
-        labels = np.zeros((number_of_pairs, 1))
 
-        for pair in range(number_of_pairs):
-            image = Image.open(os.path.abspath(path_list[pair][0]))
-            grayscale_image = color.rgb2gray(image)
+        number_of_images = len(path_list)
+        images = [np.zeros((number_of_images,
+                            self.image_height, self.image_height, self.dimensions)) for _ in range(1)][0]
+        for iteration, image in enumerate(path_list):
+            image_array = Image.open(image).convert('RGB')
+            image_array = np.asarray(image_array).astype(np.float64)
+            images[iteration, :, :, :] = image_array
 
-            # Normalize or adjust as needed
-            grayscale_image = grayscale_image / grayscale_image.std() - grayscale_image.mean()
+        return images
 
-            pairs_of_images[0][pair, :, :] = image  # Note: Squeezing dimensions
-            image = Image.open(path_list[pair][1])
-            grayscale_image = color.rgb2gray(image)
-
-            # Normalize or adjust as needed
-            grayscale_image = grayscale_image / grayscale_image.std() - grayscale_image.mean()
-
-            pairs_of_images[0][pair, :, :] = image  # Note: Squeezing dimensions
-            pairs_of_images[1][pair, :, :, :] = image
-
-            if not is_one_shot_task:
-                if (pair < number_of_pairs / 2):
-                    labels[pair] = 1
-                else:
-                    labels[pair] = 0
-            elif true_index != -1:
-                if pair == true_index:
-                    labels[pair] = 1
-                else:
-                    labels[pair] = 0
-            else:
-                if pair == 0:
-                    labels[pair] = 1
-                else:
-                    labels[pair] = 0
     def get_random_image_from_class(self, currentTS, numberOfImages, dataset):
         imagesOfCurrentTS = os.listdir(os.path.join(
             self.dataset_path, dataset, currentTS))
@@ -322,7 +336,7 @@ class TSLoader:
                     break
             batch_images_path.append(differentTS)
 
-        images, labels = self._convert_path_list_to_images_and_labels_gray(
+        images, labels = self._convert_path_list_to_images_and_labels(
             batch_images_path, is_one_shot_task=False)
 
         # Get random transforms if augmentation is on
@@ -369,7 +383,7 @@ class TSLoader:
             otherTSImage = self.get_random_image_from_class(otherTSClass, 1, image_folder_name)
             batchImagePath.append([first_test_images[0], otherTSImage])
 
-        images, labels = self._convert_path_list_to_images_and_labels_gray(
+        images, labels = self._convert_path_list_to_images_and_labels(
             batchImagePath, is_one_shot_task=True)
 
         return images, labels
@@ -384,8 +398,20 @@ class TSLoader:
             otherTSImage = self.get_random_image_from_class(otherTSClass, 1, image_folder_name)
             batchImagePath.append([first_test_image, otherTSImage])
 
-        images, labels = self._convert_path_list_to_images_and_labels_gray(
+        images, labels = self._convert_path_list_to_images_and_labels(
             batchImagePath, True, true_index=traffic_signs.index(ts_class))
+
+        return images, labels
+
+    def get_full_one_shot_batch_no_labels(self, imageToTest, traffic_signs, image_folder_name):
+        dictionary = self.evaluation_dictionary
+        batchImagePath = []
+
+        for otherTSClass in traffic_signs:
+            otherTSImage = self.get_random_image_from_class(otherTSClass, 1, image_folder_name)
+            batchImagePath.append([imageToTest, otherTSImage])
+
+        images, labels = self._convert_path_list_to_images_and_labels(batchImagePath, True)
 
         return images, labels
 
@@ -509,6 +535,7 @@ class TSLoader:
         trafficSigns.sort()
 
         mean_global_accuracy = 0
+        mean_global_ten_accuracy = 0
 
         output_dir = os.path.join(output_dir, subfolder)
         os.makedirs(output_dir, exist_ok=True)  # Ensure directory exists
@@ -523,6 +550,7 @@ class TSLoader:
         with open(output_file, 'a') as f:
             for trafficSign in trafficSigns:
                 mean_ts_accuracy = 0
+                mean_ten_accuracy = 0
                 for _ in range(number_of_tasks_per_ts):
                     images, _ = self.get_full_one_shot_batch(trafficSign, trafficSigns, subfolder)
                     probabilities = model.predict_on_batch(images)
@@ -531,18 +559,23 @@ class TSLoader:
                     for index in top_10_indices_flat:
                         top_10_classes.append(trafficSigns[index])
                     accuracy = 0.0
+                    ten_accuracy = 0.0
                     for index, trafficSignToCompare in enumerate(top_10_classes):
                         if trafficSignToCompare == trafficSign:
                             accuracy = 1.0 - (index / 10)
+                            ten_accuracy = 1.0
                             print(accuracy)
                     # if trafficSign in top_10_classes:
                     #     accuracy = 1.0
                     # else:
                     #     accuracy = 0.0
                     mean_ts_accuracy += accuracy
+                    mean_ten_accuracy += ten_accuracy
                     mean_global_accuracy += accuracy
+                    mean_global_ten_accuracy += ten_accuracy
 
                 mean_ts_accuracy /= number_of_tasks_per_ts
+                mean_ten_accuracy /= number_of_tasks_per_ts
 
                 print(trafficSign + ' traffic sign' + ', accuracy: ' +
                       str(mean_ts_accuracy))
@@ -554,6 +587,8 @@ class TSLoader:
 
             mean_global_accuracy /= (len(trafficSigns) *
                                      number_of_tasks_per_ts)
+            mean_global_ten_accuracy /= (len(trafficSigns) *
+                                         number_of_tasks_per_ts)
 
             print('\nMean global accuracy: ' + str(mean_global_accuracy))
             f.write('\nMean global accuracy: ' + str(mean_global_accuracy))
@@ -565,9 +600,9 @@ class TSLoader:
         else:
             self._current_evaluation_ts_index = 0
 
-        return mean_global_accuracy
+        return mean_global_accuracy, mean_global_ten_accuracy
 
-    def get_all_classes_test(self, model, number_of_tasks_per_ts, output_dir):
+    def get_all_classes_test(self, model, number_of_tasks_per_ts, output_dir, matrix_name):
         self._evaluationTS = list(self.train_dictionary.keys())
 
         """ Prepare one-shot task and evaluate its performance
@@ -618,5 +653,53 @@ class TSLoader:
             df = pd.DataFrame(similarity_matrix, index=trafficSigns, columns=trafficSigns)
 
             # Save as CSV for readability
-            df.to_csv(os.path.join(output_dir, 'similarity_matrix_ts_9.csv'))
+            df.to_csv(os.path.join(output_dir, f'{matrix_name}.csv'))
             print('Similarity matrix saved as CSV')
+
+    def get_cropped_images_test(self, model, output_dir, matrix_path, number_of_tasks_per_image=5):
+        self._evaluationTS = list(self.train_dictionary.keys())
+        traffic_sign_classes = self._validationTS
+        traffic_sign_classes.sort()
+
+        cropped_images = []
+
+        for file in os.listdir(output_dir):
+            file_path = os.path.join(output_dir, file)
+            if file_path.__contains__("grouped") is False:
+                cropped_images.append(file_path)
+        cropped_images.sort()
+        batch_length = int(len(cropped_images) / 10)
+        print(batch_length)
+        starting_index = 0
+        for i in range(1, 11):
+            cropped_images_divided = []
+            if i == 10:
+                cropped_images_divided = cropped_images[starting_index:]
+            else:
+                cropped_images_divided = cropped_images[starting_index:(starting_index + batch_length)]
+            starting_index += batch_length
+            images_length = len(cropped_images_divided)
+            traffic_classes_length = len(traffic_sign_classes)
+            print('\nMaking One Shot Task on cropped images traffic signs:')
+            subfolder = 'validation'
+            prefix = 'full_test_'
+
+            similarity_matrix = np.zeros((images_length, traffic_classes_length))
+            for ref_class_index, trafficSign in enumerate(cropped_images_divided):
+                current_matrix = np.zeros((traffic_classes_length, 1))
+                for _ in range(number_of_tasks_per_image):
+                    images, _ = self.get_full_one_shot_batch_no_labels(trafficSign, traffic_sign_classes, 'validation')
+                    probabilities = model.predict_on_batch(images)
+                    # I need to add all the values of probabilities based on index into the current_matrix
+                    for i in range(traffic_classes_length):
+                        current_matrix[i] += probabilities[i]
+                for i in range(traffic_classes_length):
+                    current_matrix[i] /= number_of_tasks_per_image
+                print(f"successfully appended class {trafficSign}")
+                # Now I need to add the current_matrix to the similarity_matrix as a next row
+                similarity_matrix[ref_class_index] = current_matrix.T
+            # Create a DataFrame for better output
+            df = pd.DataFrame(similarity_matrix, index=cropped_images_divided, columns=traffic_sign_classes)
+            # Save as CSV for readability
+            df.to_csv(f"{matrix_path}_{starting_index}.csv")
+            print(f'Similarity matrix {starting_index} saved as CSV')

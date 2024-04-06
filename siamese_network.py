@@ -34,7 +34,8 @@ class SiameseNetwork:
     """
 
     def __init__(self, dataset_path, learning_rate, batch_size, use_augmentation,
-                 learning_rate_multipliers, l2_regularization_penalization, tensorboard_log_path):
+                 learning_rate_multipliers, l2_regularization_penalization, tensorboard_log_path, grayscale=False,
+                 gpu=1):
         """Inits SiameseNetwork with the provided values for the attributes.
 
         It also constructs the siamese network architecture, creates a dataset
@@ -65,12 +66,25 @@ class SiameseNetwork:
                     L2_dictionary['dense2']=0.01
             tensorboard_log_path: path to store the logs
         """
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            try:
+                # Target the 1st available GPU (index 1)
+                tf.config.set_visible_devices(gpus[gpu], 'GPU')
+                logical_gpus = tf.config.list_logical_devices('GPU')
+                print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+            except RuntimeError as e:
+                print(e)
         # tf.compat.v1.disable_eager_execution()
-        self.input_shape = (128, 128, 4)  # Size of images
+        if grayscale:
+            self.input_shape = (128, 128, 1)  # Size of images
+        else:
+            print("It will be 4 thing shape")
+            self.input_shape = (128, 128, 4)
         self.model = []
         self.learning_rate = learning_rate
         self.ts_loader = TSLoader(
-            dataset_path=dataset_path, use_augmentation=use_augmentation, batch_size=batch_size)
+            dataset_path=dataset_path, use_augmentation=use_augmentation, batch_size=batch_size, grayscale=grayscale)
         self.summary_writer = tf.summary.create_file_writer(tensorboard_log_path)
         self._construct_siamese_architecture(learning_rate_multipliers,
                                              l2_regularization_penalization)
@@ -101,14 +115,14 @@ class SiameseNetwork:
                                      name='Conv2'))
         convolutional_net.add(MaxPool2D())
 
-        convolutional_net.add(Conv2D(filters=128, kernel_size=(4, 4),
+        convolutional_net.add(Conv2D(filters=256, kernel_size=(4, 4),
                                      activation='relu',
                                      kernel_regularizer=l2(
                                          l2_regularization_penalization['Conv3']),
                                      name='Conv3'))
         convolutional_net.add(MaxPool2D())
 
-        convolutional_net.add(Conv2D(filters=256, kernel_size=(4, 4),
+        convolutional_net.add(Conv2D(filters=512, kernel_size=(4, 4),
                                      activation='relu',
                                      kernel_regularizer=l2(
                                          l2_regularization_penalization['Conv4']),
@@ -122,11 +136,11 @@ class SiameseNetwork:
                   name='Dense1'))
 
         # Filter Visualization for TensorBoard
-        for layer in convolutional_net.layers:
-            if 'Conv' in layer.name:
-                filters = layer.get_weights()[0]
-                filter_vis = self.visualize_filters(filters)  # We'll define this function next
-                tf.summary.image(layer.name, filter_vis, max_outputs=filters.shape[3])
+        # for layer in convolutional_net.layers:
+        #     if 'Conv' in layer.name:
+        #         filters = layer.get_weights()[0]
+        #         filter_vis = self.visualize_filters(filters)  # We'll define this function next
+        #         tf.summary.image(layer.name, filter_vis, max_outputs=filters.shape[3])
 
         # Now the pairs of images
         input_image_1 = Input(self.input_shape)
@@ -165,14 +179,15 @@ class SiameseNetwork:
         Returns:
             A reshaped 4D Tensor ready for `tf.summary.image`
         """
-        filters = np.squeeze(filters)  # May need squeezing if there's a batch dim
-        filters = np.transpose(filters, (3, 0, 1, 2))  # Transpose for visualization
-        n_groups, n_rows, n_cols, _ = filters.shape
-        # filters = filters.reshape(n_groups * n_rows, n_cols, *reshape_shape)
-        return tf.expand_dims(filters, -1)  # Add a channel dimension for grayscale
+        # filters = np.squeeze(filters)  # May need squeezing if there's a batch dim
+        # filters = np.transpose(filters, (3, 0, 1, 2))  # Transpose for visualization
+        # n_groups, n_rows, n_cols, _ = filters.shape
+        # # filters = filters.reshape(n_groups * n_rows, n_cols, *reshape_shape)
+        # return tf.expand_dims(filters, -1)  # Add a channel dimension for grayscale
 
     def _write_logs_to_tensorboard(self, current_iteration, train_losses,
                                    train_accuracies, validation_accuracy,
+                                   ten_class_validation_accuracy,
                                    evaluate_each):
         """ Writes the logs to a tensorflow log file
 
@@ -193,16 +208,6 @@ class SiameseNetwork:
         """
 
         with self.summary_writer.as_default():
-            # for layer in self.model.layers:
-            #     for layer2 in layer[2]:
-            #         if 'Conv' in layer2.name:
-            #             weights = layer2.get_weights()[0]  # Assuming convolutional layers
-            #             # Reshape and format weights as needed for visualization
-            #             tf.summary.image(layer2.name, formatted_weights, step=current_iteration)
-            #         for weight_and_grad in zip(layer2.trainable_weights, gradients):
-            #             weight_name = weight_and_grad[0].name.replace(':', '_')
-            #             tf.summary.histogram(weight_name, weight_and_grad[1], step=current_iteration)
-            # tf.summary.histogram('activation_layer_name', activations, step=current_iteration)
             for index in range(0, evaluate_each):
                 tf.summary.scalar('Train Loss', train_losses[index], step=current_iteration - evaluate_each + index + 1)
                 tf.summary.scalar('Train Accuracy', train_accuracies[index],
@@ -211,12 +216,13 @@ class SiameseNetwork:
                 if index == (evaluate_each - 1):
                     tf.summary.scalar('One-Shot Validation Accuracy', validation_accuracy,
                                       step=current_iteration - evaluate_each + index + 1)
-
+                    tf.summary.scalar('Ten Classes Validation Accuracy', ten_class_validation_accuracy,
+                                      step=current_iteration - evaluate_each + index + 1)
             self.summary_writer.flush()
 
     def train_siamese_network(self, number_of_iterations, support_set_size,
                               final_momentum, momentum_slope, evaluate_each,
-                              model_name, general_output_file_path):
+                              model_name, general_output_file_path, bayesian):
         """ Train the Siamese net
 
         This is the main function for training the siamese net.
@@ -289,16 +295,21 @@ class SiameseNetwork:
 
             # Each 100 iterations perform a one_shot_task and write to tensorboard the
             # stored losses and accuracies
-            if (iteration + 1) % evaluate_each == 100:
-                number_of_runs_per_alphabet = 5
+            # if (bayesian is False and ((iteration + 1) % evaluate_each == 0)) or (bayesian and ((iteration + 1) == (evaluate_each)) or ((iteration + 1) == (evaluate_each + 1000)) or ((iteration + 1) == (evaluate_each + 1999))):
+            if iteration == 20000:
+                evaluate_each = 3000
+            if ((iteration + 1) % 3000 == 0):
+                if ((iteration + 1) < 20000 and (iteration + 1) % evaluate_each != 0):
+                    continue
+                number_of_runs_per_class = 5
                 # use a support set size equal to the number of character in the alphabet
-                validation_accuracy = self.ts_loader.one_shot_test(
-                    self.model, support_set_size, number_of_runs_per_alphabet, is_validation=True,
+                validation_accuracy, ten_classes_accuracy = self.ts_loader.one_shot_test(
+                    self.model, support_set_size, number_of_runs_per_class, is_validation=True,
                     output_dir=general_output_file_path)
 
                 self._write_logs_to_tensorboard(
                     iteration, train_losses, train_accuracies,
-                    validation_accuracy, evaluate_each)
+                    validation_accuracy, ten_classes_accuracy, evaluate_each)
                 count = 0
 
                 # Some hyperparameters lead to 100%, although the output is almost the same in
@@ -315,8 +326,8 @@ class SiameseNetwork:
                     return 0
                 else:
                     # Save the model
-                    if train_accuracy > best_validation_accuracy:
-                        best_validation_accuracy = train_accuracy
+                    if validation_accuracy > best_validation_accuracy:
+                        best_validation_accuracy = validation_accuracy
                         best_accuracy_iteration = iteration
 
                         model_json = self.model.to_json()
@@ -325,19 +336,22 @@ class SiameseNetwork:
                             os.makedirs('./models')
                         with open('models/' + model_name + str(iteration) + '.json', "w") as json_file:
                             json_file.write(model_json)
-                        self.model.save_weights('models/' + model_name + str(iteration) + '.h5')
+                        if bayesian is False:
+                            self.model.save_weights('models/' + model_name + str(iteration) + '.h5')
 
-                    if (iteration % (evaluate_each * 10) == 100):
+                    elif (iteration > (best_accuracy_iteration + 10000)):
+                        best_accuracy_iteration += 10000
                         model_json = self.model.to_json()
 
                         if not os.path.exists('./models'):
                             os.makedirs('./models')
                         with open('models/' + model_name + str(iteration) + '.json', "w") as json_file:
                             json_file.write(model_json)
-                        self.model.save_weights('models/' + model_name + str(iteration) + '.h5')
+                        if bayesian is False:
+                            self.model.save_weights('models/' + model_name + str(iteration) + '.h5')
 
             # If accuracy does not improve for 10000 batches stop the training
-            if iteration - best_accuracy_iteration > evaluate_each * 100:
+            if bayesian is False and (iteration - best_accuracy_iteration > (evaluate_each * 20)):
                 print(
                     'Early Stopping: validation accuracy did not increase for x iterations')
                 print('Best Validation Accuracy = ' +
