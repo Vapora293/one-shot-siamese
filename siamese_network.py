@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
 
-from omniglot_loader import OmniglotLoader
+# from omniglot_loader import OmniglotLoader
 from ts_loader import TSLoader
 from modified_sgd import Modified_SGD
 

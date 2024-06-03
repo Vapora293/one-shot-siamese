@@ -5,8 +5,10 @@ import math
 from PIL import Image
 import pandas as pd
 import pickle
-
 from image_augmentor import ImageAugmentor
+from sklearn.metrics import precision_recall_fscore_support, average_precision_score
+import ipdb
+import re
 
 
 class TSLoader:
@@ -31,7 +33,7 @@ class TSLoader:
 
     """
 
-    def __init__(self, dataset_path, use_augmentation, batch_size, grayscale=False):
+    def __init__(self, dataset_path, use_augmentation, batch_size, grayscale=False, isScaler=False):
         """Inits OmniglotLoader with the provided values for the attributes.
 
         It also creates an Image Augmentor object and loads the train set and
@@ -49,7 +51,7 @@ class TSLoader:
         self.evaluation_dictionary = {}
         self.image_width = 128
         self.image_height = 128
-        self.dimensions = 3
+        self.dimensions = 1
         self.batch_size = batch_size
         self.use_augmentation = use_augmentation
         self._trainTS = []
@@ -58,8 +60,10 @@ class TSLoader:
         self._current_validation_ts_index = 0
         self._current_evaluation_ts_index = 0
         self.grayscale = grayscale
+        self.scalers = [pickle.load(open(os.path.join("scalers", f'scaler_{i}.pkl'), 'rb')) for i in range(4)]
+        self.isScaler = isScaler
+
         self.load_dataset()
-        self.scalers = [pickle.load(open(f'scaler_{i}.pkl', 'rb')) for i in range(4)]
 
         if (self.use_augmentation):
             self.image_augmentor = self.createAugmentor()
@@ -119,6 +123,23 @@ class TSLoader:
         self._validationTS = list(self.evaluation_dictionary.keys())
         self._evaluationTS = list(self.evaluation_dictionary.keys())
 
+    def parse_augmentation(self, filename):
+        """
+        Parse the augmentation codes from the given filename.
+        Args:
+        filename (str): The name of the image file, e.g., '220-sfd.png'.
+
+        Returns:
+        str: The extracted augmentation codes, e.g., 'sfd'.
+        """
+        # Regular expression to match the pattern: number-augmentations.extension
+        # ipdb.set_trace()  # Set a breakpoint here
+        match = re.match(r'^.*-(.*).png$', filename)
+        if match:
+            return match.group(1) if match.group(1) else ""
+        else:
+            return None
+
     def _convert_path_list_to_images_and_labels(self, path_list, is_one_shot_task, true_index=None):
         """ Loads the images and its correspondent labels from the path
 
@@ -162,47 +183,50 @@ class TSLoader:
                 # image = image / image.std() - image.mean()
                 pairs_of_images[1][pair] = image
             else:
-                image = Image.open(os.path.abspath(path_list[pair][0])).convert('RGB')
-                image = np.asarray(image).astype(np.float64)
-                image_gayscale = Image.open(os.path.abspath(
-                    path_list[pair][0].replace(self.dataset_path, "ts_4_norm"))).convert('L')
-                image_gayscale = np.asarray(image_gayscale).astype(np.float64)
-                image_gayscale = image_gayscale[..., np.newaxis]  # (128, 128, 1)
-                image = np.concatenate((image, image_gayscale), axis=2)  # (128, 128, 4)
-                for channel in range(4):
-                    image_reshaped = image[..., channel].reshape(-1, 1)  # Reshape for a single channel
-                    scaler = self.scalers[channel]
-                    transformed_array = scaler.transform(image_reshaped).reshape(128, 128)
-                    image[..., channel] = transformed_array
-                pairs_of_images[0][pair, :, :, :] = image
+                # NEW COLOUR
+                #                 image = Image.open(os.path.abspath(path_list[pair][0])).convert('RGB')
+                #                 image = np.asarray(image).astype(np.float64)
+                #                 image_gayscale = Image.open(os.path.abspath(
+                #                     path_list[pair][0].replace(self.dataset_path, f"{self.dataset_path}_sobel"))).convert('L')
+                #                 image_gayscale = np.asarray(image_gayscale).astype(np.float64)
+                #                 image_gayscale = image_gayscale[..., np.newaxis]  # (128, 128, 1)
+                #                 image = np.concatenate((image, image_gayscale), axis=2)  # (128, 128, 4)
+                #                 if (self.isScaler):
+                #                     for channel in range(4):
+                #                         image_reshaped = image[..., channel].reshape(-1, 1)  # Reshape for a single channel
+                #                         scaler = self.scalers[channel]
+                #                         transformed_array = scaler.transform(image_reshaped).reshape(128, 128)
+                #                         image[..., channel] = transformed_array
+                #                 pairs_of_images[0][pair, :, :, :] = image
 
-                image = Image.open(os.path.abspath(path_list[pair][1])).convert('RGB')
-                image = np.asarray(image).astype(np.float64)
-                image_gayscale = Image.open(
-                    os.path.abspath(
-                        path_list[pair][1].replace(self.dataset_path, "ts_4_norm"))).convert(
-                    'L')
-                image_gayscale = np.asarray(image_gayscale).astype(np.float64)
-                image_gayscale = image_gayscale[..., np.newaxis]  # (128, 128, 1)
-                image = np.concatenate((image, image_gayscale), axis=2)  # (128, 128, 4)
-                for channel in range(4):
-                    image_reshaped = image[..., channel].reshape(-1, 1)  # Reshape for a single channel
-                    scaler = self.scalers[channel]
-                    transformed_array = scaler.transform(image_reshaped).reshape(128, 128)
-                    image[..., channel] = transformed_array
-                pairs_of_images[1][pair, :, :, :] = image
+                #                 image = Image.open(os.path.abspath(path_list[pair][1])).convert('RGB')
+                #                 image = np.asarray(image).astype(np.float64)
+                #                 image_gayscale = Image.open(
+                #                     os.path.abspath(
+                #                         path_list[pair][1].replace(self.dataset_path, f"{self.dataset_path}_sobel"))).convert(
+                #                     'L')
+                #                 image_gayscale = np.asarray(image_gayscale).astype(np.float64)
+                #                 image_gayscale = image_gayscale[..., np.newaxis]  # (128, 128, 1)
+                #                 image = np.concatenate((image, image_gayscale), axis=2)  # (128, 128, 4)
+                #                 if (self.isScaler):
+                #                     for channel in range(4):
+                #                         image_reshaped = image[..., channel].reshape(-1, 1)  # Reshape for a single channel
+                #                         scaler = self.scalers[channel]
+                #                         transformed_array = scaler.transform(image_reshaped).reshape(128, 128)
+                #                         image[..., channel] = transformed_array
+                #                 pairs_of_images[1][pair, :, :, :] = image
                 # OLD COLOUR
-                # image = Image.open(os.path.abspath(path_list[pair][0]))
-                # image = np.asarray(image).astype(np.float64)
-                # # image = (image - image.min()) / (image.max() - image.min())  # Scale to 0-1
-                # # image = image / image.std() - image.mean()
-                # pairs_of_images[0][pair, :, :, :] = image
-                #
-                # image = Image.open(os.path.abspath(path_list[pair][1]))
-                # image = np.asarray(image).astype(np.float64)
-                # # image = (image - image.min()) / (image.max() - image.min())  # Scale to 0-1
-                # # image = image / image.std() - image.mean()
-                # pairs_of_images[1][pair, :, :, :] = image
+                image = Image.open(os.path.abspath(path_list[pair][0]))
+                image = np.asarray(image).astype(np.float64)
+                # image = (image - image.min()) / (image.max() - image.min())  # Scale to 0-1
+                # image = image / image.std() - image.mean()
+                pairs_of_images[0][pair, :, :, :] = image[:, :, :3]
+
+                image = Image.open(os.path.abspath(path_list[pair][1]))
+                image = np.asarray(image).astype(np.float64)
+                # image = (image - image.min()) / (image.max() - image.min())  # Scale to 0-1
+                # image = image / image.std() - image.mean()
+                pairs_of_images[1][pair, :, :, :] = image[:, :, :3]
 
             if not is_one_shot_task:
                 if (pair < number_of_pairs / 2):
@@ -284,6 +308,49 @@ class TSLoader:
                     self.dataset_path, dataset, currentTS, imagesOfCurrentTS[0])
             else:
                 imagePaths = []
+                print(f"{currentTS} + {len(imagesOfCurrentTS)}")
+                image_path = os.path.join(
+                    self.dataset_path, dataset, currentTS, imagesOfCurrentTS[0])
+                imagePaths.append(image_path)
+                image_path = os.path.join(
+                    self.dataset_path, 'train', currentTS, 'AUGMUMENT')
+                imagePaths.append(image_path)
+                return imagePaths
+
+    def get_random_image_from_class_same_aug(self, currentTS, numberOfImages, dataset, augmentation):
+        imagesOfCurrentTS = os.listdir(os.path.join(
+            self.dataset_path, dataset, currentTS))
+        if len(imagesOfCurrentTS) > 1:
+            imagePaths = []
+            for image in imagesOfCurrentTS:
+                if self.parse_augmentation(image) == augmentation:
+                    imagePaths.append(image)
+            if len(imagePaths) < numberOfImages:
+                for image in imagesOfCurrentTS:
+                    if augmentation[0] in self.parse_augmentation(image):
+                        imagePaths.append(image)
+
+            randomImages = imagePaths
+            if numberOfImages < len(imagePaths):
+                randomImages = random.sample(imagePaths, numberOfImages)
+            # ipdb.set_trace()  # Set a breakpoint here
+
+            if numberOfImages > 1:
+                for i in range(0, numberOfImages):
+                    image_path = os.path.join(
+                        self.dataset_path, dataset, currentTS, randomImages[i])
+                    imagePaths.append(image_path)
+                return imagePaths
+            else:
+                return os.path.join(
+                    self.dataset_path, dataset, currentTS, randomImages[0])
+        else:
+            if numberOfImages == 1:
+                return os.path.join(
+                    self.dataset_path, dataset, currentTS, imagesOfCurrentTS[0])
+            else:
+                imagePaths = []
+                print(f"{currentTS} + {len(imagesOfCurrentTS)}")
                 image_path = os.path.join(
                     self.dataset_path, dataset, currentTS, imagesOfCurrentTS[0])
                 imagePaths.append(image_path)
@@ -396,6 +463,23 @@ class TSLoader:
 
         for otherTSClass in traffic_signs:
             otherTSImage = self.get_random_image_from_class(otherTSClass, 1, image_folder_name)
+            batchImagePath.append([first_test_image, otherTSImage])
+
+        images, labels = self._convert_path_list_to_images_and_labels(
+            batchImagePath, True, true_index=traffic_signs.index(ts_class))
+
+        return images, labels
+
+    def get_full_one_shot_batch_same_aug(self, ts_class, traffic_signs, image_folder_name):
+        dictionary = self.evaluation_dictionary
+        first_test_image = self.get_random_image_from_class(ts_class, 1, image_folder_name)
+        # ipdb.set_trace()  # Set a breakpoint here
+        aug = self.parse_augmentation(first_test_image)
+
+        batchImagePath = []
+
+        for otherTSClass in traffic_signs:
+            otherTSImage = self.get_random_image_from_class_same_aug(otherTSClass, 1, image_folder_name, aug)
             batchImagePath.append([first_test_image, otherTSImage])
 
         images, labels = self._convert_path_list_to_images_and_labels(
@@ -558,7 +642,7 @@ class TSLoader:
                     top_10_classes = []
                     for index in top_10_indices_flat:
                         top_10_classes.append(trafficSigns[index])
-                    accuracy = 0.0
+                    accuracy = 0.
                     ten_accuracy = 0.0
                     for index, trafficSignToCompare in enumerate(top_10_classes):
                         if trafficSignToCompare == trafficSign:
@@ -601,6 +685,98 @@ class TSLoader:
             self._current_evaluation_ts_index = 0
 
         return mean_global_accuracy, mean_global_ten_accuracy
+
+    def one_shot_test_additional(self, model, number_of_tasks_per_ts,
+                                 is_validation, output_dir, csv_name):
+        """ Prepare one-shot task and evaluate its performance
+
+        Make one shot task in validation and evaluation sets
+        if support_set_size = -1 we perform a N-Way one-shot task with
+        N being the total of characters in the alphabet
+
+        Returns:
+            mean_accuracy: mean accuracy for the one-shot task
+        """
+
+        if is_validation:
+            trafficSigns = self._validationTS
+            print('\nMaking One Shot Task on validation traffic signs:')
+            subfolder = 'validation'
+            prefix = 'validation_'
+        else:
+            trafficSigns = self._evaluationTS
+            print('\nMaking One Shot Task on evaluation traffic signs:')
+            subfolder = 'evaluation'
+            prefix = 'evaluation_'
+
+        trafficSigns.sort()
+        tslength = len(trafficSigns)
+
+        mean_global_accuracy = 0
+        mean_global_ten_accuracy = 0
+
+        output_dir = os.path.join(output_dir, subfolder)
+        os.makedirs(output_dir, exist_ok=True)  # Ensure directory exists
+        existing_files = [f for f in os.listdir(output_dir) if f.startswith(prefix)]
+        if existing_files:
+            last_num = max([int(f[len(prefix):-4]) for f in existing_files])
+            file_num = last_num + 1
+        else:
+            file_num = 1
+        output_file = os.path.join(output_dir, prefix + str(file_num) + '.txt')
+
+        similarity_matrix = np.zeros((tslength, number_of_tasks_per_ts))
+        true_labels_matrix = np.array([[i] * number_of_tasks_per_ts for i in range(len(trafficSigns))])
+
+        predicted_scores = []
+
+        with open(output_file, 'a') as f:
+            for ref_class_index, trafficSign in enumerate(trafficSigns):
+                current_matrix = np.zeros((number_of_tasks_per_ts,))
+                for index in range(number_of_tasks_per_ts):
+                    images, _ = self.get_full_one_shot_batch(trafficSign, trafficSigns, subfolder)
+                    probabilities = model.predict_on_batch(images)
+                    top_3_indices_flat = np.argsort(self.get_flattened_values(probabilities))[-3:][::-1]
+                    # ipdb.set_trace()  # Set a breakpoint here
+                    current_matrix[index] = top_3_indices_flat[0]
+
+                print(f"successfully appended class {trafficSign}")
+                similarity_matrix[ref_class_index] = current_matrix
+
+        #             df = pd.DataFrame(similarity_matrix, index=trafficSigns, columns=number_of_tasks_per_ts)
+
+        #             df.to_csv(os.path.join(output_dir, f"{csv_name}.csv"))
+        #             print('Similarity matrix saved as CSV')
+
+        # ipdb.set_trace()
+        # similarity_matrix += 1
+        # true_labels
+
+        true_labels = true_labels_matrix.flatten()
+        predicted_scores = np.array(predicted_scores).reshape(-1, tslength)
+
+        # predicted_labels = np.zeros_like(similarity_matrix)
+        # predicted_labels[np.arange(similarity_matrix.shape[0]), np.argmax(similarity_matrix, axis=1)] = 1
+        # predicted_labels = predicted_labels.flatten()
+        predicted_labels = similarity_matrix.flatten()
+        # predicted_labels = np.argmax(predicted_scores, axis=1).flatten()
+        # ipdb.set_trace()  # Set a breakpoint here
+
+        precision, recall, fscore, _ = precision_recall_fscore_support(true_labels, predicted_labels, average='macro')
+        # map_score = average_precision_score(true_labels, similarity_matrix.flatten(), average='macro')
+
+        print(f'Precision: {precision}')
+        print(f'Recall: {recall}')
+        print(f'F-Score: {fscore}')
+        # print(f'mAP: {map_score}')
+
+        # Optionally, write these metrics to the output file
+        with open(f"{csv_name}".replace("csv", "txt"), 'a') as f:
+            f.write(f'Precision: {precision}\n')
+            f.write(f'Recall: {recall}\n')
+            f.write(f'mAP: {map_score}\n')
+
+        return precision, recall, map_score
 
     def get_all_classes_test(self, model, number_of_tasks_per_ts, output_dir, matrix_name):
         self._evaluationTS = list(self.train_dictionary.keys())
